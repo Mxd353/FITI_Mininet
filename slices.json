@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "topo": "fiti.json",
+  "isolation": "vlan",
+  "controller": {
+    "mode": "stp"
+  },
+  "defaults": {
+    "vlan_base": 100,
+    "subnet_base": 10
+  },
+  "srv6": {
+    "enabled": false,
+    "underlay_prefix": "2001:db8",
+    "overlay_prefix": "fd00",
+    "decap_table": 100,
+    "mtu": 1420
+  },
+  "slices": [
+    {
+      "id": "nor",
+      "name": "华北/东北",
+      "vlan": 100,
+      "subnet": "10.1.0.0/24",
+      "hosts": [
+        "bj", "zhz", "tjn", "sjz", "tyn", "hht",
+        "sy", "chc", "hrb", "dln",
+        "zgc", "pku", "bupt", "buaa"
+      ]
+    },
+    {
+      "id": "eas",
+      "name": "华东",
+      "vlan": 101,
+      "subnet": "10.2.0.0/24",
+      "hosts": [
+        "sh", "nj", "hzh", "hef", "jnn", "qda",
+        "fzh", "xmn", "nch", "fudan", "tongji"
+      ]
+    },
+    {
+      "id": "sou",
+      "name": "华南/华中",
+      "vlan": 102,
+      "subnet": "10.3.0.0/24",
+      "hosts": [
+        "gz", "szh", "nan", "hak", "chs", "wh"
+      ]
+    },
+    {
+      "id": "wes",
+      "name": "西部",
+      "vlan": 103,
+      "subnet": "10.4.0.0/24",
+      "hosts": [
+        "xa", "cd", "chq", "lzh", "gyn",
+        "kmn", "lsa", "xnn", "ych", "wlq"
+      ]
+    }
+  ]
+}
