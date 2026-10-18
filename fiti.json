@@ -6,7 +6,7 @@
             "abbr": "bj",
             "x": 86,
             "y": -59,
-            "degree": 11
+            "degree": 12
         },
         {
             "id": "2",
@@ -38,7 +38,7 @@
             "abbr": "gz",
             "x": 87,
             "y": 240,
-            "degree": 6
+            "degree": 5
         },
         {
             "id": "6",
@@ -54,7 +54,7 @@
             "abbr": "wh",
             "x": 87,
             "y": 107,
-            "degree": 6
+            "degree": 5
         },
         {
             "id": "8",
@@ -550,15 +550,15 @@
         "total_nodes": 41,
         "total_links": 43,
         "degree_distribution": {
-            "degree_1": 27,
+            "degree_1": 24,
             "degree_2": 8,
             "degree_3": 3,
             "degree_4": 1,
-            "degree_5": 1,
-            "degree_6": 3,
-            "degree_11": 1
+            "degree_5": 3,
+            "degree_6": 1,
+            "degree_12": 1
         },
-        "highest_degree_node": "北京 (id:1, degree:11)",
+        "highest_degree_node": "北京 (id:1, degree:12)",
         "average_degree": 2.1
     }
 }

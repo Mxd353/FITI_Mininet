@@ -4,13 +4,13 @@
 
 ## 拓扑概况
 
-| 项目 | 说明 |
-|---|---|
-| 节点 | 41 个（每个节点对应一台 OVS 交换机 `s<id>` 和一台主机 `<abbr>`） |
-| 骨干链路 | 43 条 |
-| 主机地址 | `10.0.0.<id>/24` |
-| 链路权重 | `weight` 4/2/1 映射为 100/50/10 Mbps |
-| 节点示例 | 北京 `s1` / `bj`，上海 `s2` / `sh`，西安 `s3` / `xa` |
+| 项目     | 说明                                                             |
+| -------- | ---------------------------------------------------------------- |
+| 节点     | 41 个（每个节点对应一台 OVS 交换机 `s<id>` 和一台主机 `<abbr>`） |
+| 骨干链路 | 43 条                                                            |
+| 主机地址 | `10.0.0.<id>/24`                                                 |
+| 链路权重 | `weight` 4/2/1 映射为 100/50/10 Mbps                             |
+| 节点示例 | 北京 `s1` / `bj`，上海 `s2` / `sh`，西安 `s3` / `xa`             |
 
 文件：
 
@@ -19,6 +19,13 @@
 - `fiti_slice.py`：网络切片 CLI 与库接口
 - `slices.json`：切片配置示例
 - `SLICING_DESIGN.md`：切片设计方案与限制
+- `fiti_topology.svg`：平面拓扑图（含度数与链路权重统计面板）
+
+## 拓扑图
+
+`fiti_topology.svg` 为平面拓扑图：节点大小与颜色按度数区分，右侧面板给出节点数、链路数、平均度数、最高度数节点、度数分布与链路权重构成。文字以 `<text>` 保存，可直接在 Inkscape / Illustrator 中编辑。
+
+数据来源与 `fiti.json` 一致：连线关系、链路 `weight`、节点度数均以 `links` 为唯一事实来源，不读 `statistics`。
 
 ## 环境要求
 
@@ -69,20 +76,20 @@ sudo mn --custom fiti_topo.py --topo fiti --link tc
 
 ## 命令行参数
 
-| 参数 | 默认值 | 说明 |
-|---|---|---|
-| `--topo-file PATH` | `fiti.json` | 拓扑 JSON 路径 |
-| `--dump` | 关闭 | 只打印拓扑统计并退出 |
-| `--no-hosts` | 关闭 | 只创建 41 台交换机 |
-| `--no-tc` | 关闭 | 使用普通链路，不限制带宽 |
-| `--bw-map MAP` | `4:100,2:50,1:10` | `weight:Mbps` 映射 |
-| `--controller MODE` | `stp` | `stp` / `default` / `remote` |
-| `--controller-ip IP` | `127.0.0.1` | 外部控制器地址 |
-| `--controller-port PORT` | `6653` | 外部控制器端口 |
-| `--wait-connected` | 关闭 | stp 模式下等待 STP 收敛；remote 模式下等待交换机连接控制器 |
-| `--stp-wait SEC` | `60` | STP 收敛等待上限 |
-| `--pingall` | 关闭 | 启动后先执行 pingall |
-| `--log LEVEL` | `info` | Mininet 日志级别 |
+| 参数                     | 默认值            | 说明                                                       |
+| ------------------------ | ----------------- | ---------------------------------------------------------- |
+| `--topo-file PATH`       | `fiti.json`       | 拓扑 JSON 路径                                             |
+| `--dump`                 | 关闭              | 只打印拓扑统计并退出                                       |
+| `--no-hosts`             | 关闭              | 只创建 41 台交换机                                         |
+| `--no-tc`                | 关闭              | 使用普通链路，不限制带宽                                   |
+| `--bw-map MAP`           | `4:100,2:50,1:10` | `weight:Mbps` 映射                                         |
+| `--controller MODE`      | `stp`             | `stp` / `default` / `remote`                               |
+| `--controller-ip IP`     | `127.0.0.1`       | 外部控制器地址                                             |
+| `--controller-port PORT` | `6653`            | 外部控制器端口                                             |
+| `--wait-connected`       | 关闭              | stp 模式下等待 STP 收敛；remote 模式下等待交换机连接控制器 |
+| `--stp-wait SEC`         | `60`              | STP 收敛等待上限                                           |
+| `--pingall`              | 关闭              | 启动后先执行 pingall                                       |
+| `--log LEVEL`            | `info`            | Mininet 日志级别                                           |
 
 说明：拓扑存在环路，默认的 `stp` 模式使用 OVS standalone 学习交换并开启 STP，避免广播风暴；STP 收敛通常需要 30–45 秒。使用 `default` 或 `remote` 模式时，需由控制器处理环路（如运行 STP 应用），否则可能出现广播风暴。
 
@@ -132,16 +139,16 @@ print(switch_name(1), host_name(data, 1), host_ip(1))
 
 ### 主要接口
 
-| 接口 | 说明 |
-|---|---|
-| `build_net(**kwargs)` | 创建并启动网络，返回 `Mininet` 实例 |
-| `fiti_network(**kwargs)` | `build_net` 的上下文管理器 |
-| `build_topology(...)` | 构造 `FitiTopo` 对象 |
-| `load_topology(path)` | 读取拓扑 JSON |
-| `validate_topology(data)` | 校验并返回告警列表 |
-| `compute_degrees(data)` | 按 `links` 计算节点度数 |
-| `node_by_id / switch_name / switch_dpid / host_name / host_ip` | id 与交换机、主机、IP、dpid 互转 |
-| `get_host(net, id)` / `get_switch(net, id)` | 从网络对象中按 id 取主机/交换机 |
+| 接口                                                           | 说明                                |
+| -------------------------------------------------------------- | ----------------------------------- |
+| `build_net(**kwargs)`                                          | 创建并启动网络，返回 `Mininet` 实例 |
+| `fiti_network(**kwargs)`                                       | `build_net` 的上下文管理器          |
+| `build_topology(...)`                                          | 构造 `FitiTopo` 对象                |
+| `load_topology(path)`                                          | 读取拓扑 JSON                       |
+| `validate_topology(data)`                                      | 校验并返回告警列表                  |
+| `compute_degrees(data)`                                        | 按 `links` 计算节点度数             |
+| `node_by_id / switch_name / switch_dpid / host_name / host_ip` | id 与交换机、主机、IP、dpid 互转    |
+| `get_host(net, id)` / `get_switch(net, id)`                    | 从网络对象中按 id 取主机/交换机     |
 
 `build_net` 常用参数：`with_hosts`、`bw_map`、`use_tc`、`controller`、`controller_ip`、`controller_port`、`stp`、`wait_connected`、`stp_wait`、`start`、`switch_cls`。
 
@@ -174,28 +181,28 @@ sudo python3 fiti_topo.py --slices slices.json --check
 
 ### 示例切片
 
-| 切片 | VLAN | 子网 | 主机数 | 覆盖 |
-|---|---|---|---|---|
-| `nor` | 100 | 10.1.0.0/24 | 14 | 华北 / 东北 / 北京高校 |
-| `eas` | 101 | 10.2.0.0/24 | 11 | 华东 |
-| `sou` | 102 | 10.3.0.0/24 | 6 | 华南 / 华中 |
-| `wes` | 103 | 10.4.0.0/24 | 10 | 西部 |
+| 切片  | VLAN | 子网        | 主机数 | 覆盖                   |
+| ----- | ---- | ----------- | ------ | ---------------------- |
+| `nor` | 100  | 10.1.0.0/24 | 14     | 华北 / 东北 / 北京高校 |
+| `eas` | 101  | 10.2.0.0/24 | 11     | 华东                   |
+| `sou` | 102  | 10.3.0.0/24 | 6      | 华南 / 华中            |
+| `wes` | 103  | 10.4.0.0/24 | 10     | 西部                   |
 
 主机名为 `<切片id>_<abbr>`，例如 `nor_bj`（北京）、`eas_sh`（上海）；IP 为 `10.<切片序号>.0.<节点id>/24`。主机名与 IP 的对应关系可用 `--dump` 查看；在 Mininet CLI 中可用 `nor_bj ping -c 3 10.1.0.14` 这类命令（目标地址用 IP）。
 
 ### 配置字段
 
-| 字段 | 说明 |
-|---|---|
-| `isolation` | `vlan`（唯一支持） |
-| `controller.mode` | `stp` / `default` / `remote`，默认 `stp` |
-| `defaults.vlan_base` | 未指定 VLAN 时从 100 起分配 |
-| `defaults.subnet_base` | 未指定子网时按 `10.<序号>.0.0/24` 分配 |
-| `srv6.enabled` | 是否默认开启 SRv6 overlay |
-| `srv6.decap_table` | 解封装路由表，默认 100 |
-| `slices[].id` | 切片标识，也是主机名前缀 |
-| `slices[].vlan` / `subnet` | 可选，自动分配；需全局唯一 |
-| `slices[].hosts` | 节点 `abbr` 列表，或 `"all"` |
+| 字段                       | 说明                                     |
+| -------------------------- | ---------------------------------------- |
+| `isolation`                | `vlan`（唯一支持）                       |
+| `controller.mode`          | `stp` / `default` / `remote`，默认 `stp` |
+| `defaults.vlan_base`       | 未指定 VLAN 时从 100 起分配              |
+| `defaults.subnet_base`     | 未指定子网时按 `10.<序号>.0.0/24` 分配   |
+| `srv6.enabled`             | 是否默认开启 SRv6 overlay                |
+| `srv6.decap_table`         | 解封装路由表，默认 100                   |
+| `slices[].id`              | 切片标识，也是主机名前缀                 |
+| `slices[].vlan` / `subnet` | 可选，自动分配；需全局唯一               |
+| `slices[].hosts`           | 节点 `abbr` 列表，或 `"all"`             |
 
 校验会检查 VLAN / 子网冲突、未知节点、主机名过长，以及不支持的 `bridge` 模式。
 
@@ -203,11 +210,11 @@ sudo python3 fiti_topo.py --slices slices.json --check
 
 用 `--srv6` 或 `"srv6": {"enabled": true}` 开启。只有主机命名空间做 SRv6 封装/解封装，OVS 只做 L2 承载：
 
-| 用途 | 地址 |
-|---|---|
-| underlay | `2001:db8:<切片序号>::<节点id>/64` |
-| SID | `2001:db8:<切片序号>:<节点id>::1/128` |
-| overlay | `fd00:<切片序号>::<节点id>/128` |
+| 用途     | 地址                                  |
+| -------- | ------------------------------------- |
+| underlay | `2001:db8:<切片序号>::<节点id>/64`    |
+| SID      | `2001:db8:<切片序号>:<节点id>::1/128` |
+| overlay  | `fd00:<切片序号>::<节点id>/128`       |
 
 - 切片内主机两两建立 `encap seg6` 路由，目的主机用 `End.DT6` 解封装。
 - 关闭 IPv6 DAD 并预置静态邻居，首包即可通。
@@ -231,14 +238,3 @@ net.stop()
 ```
 
 常用接口：`build_slice_net(cfg)`、`SliceManager.ping_slice(id)`、`hosts(id)`、`host(id, abbr)`、`enable_srv6()`、`check_srv6_slice(id)`、`stats()`。
-
-## 拓扑数据说明
-
-脚本以 `links` 为准。运行时会提示 `fiti.json` 中的以下不一致：
-
-- 北京（`id=1`）：`degree` 声明为 11，实际为 12（多出 `3 - 1` 链路）
-- 广州（`id=5`）：`degree` 声明为 6，实际为 5
-- 武汉（`id=7`）：`degree` 声明为 6，实际为 5
-- `statistics.degree_distribution` 与实际统计不一致：实际为 1/2/3/4/5/6/12 度 = 24/8/3/1/3/1/1
-
-如需修改拓扑，直接编辑 `fiti.json` 的 `nodes` 与 `links` 即可。
