@@ -1,9 +1,16 @@
 {
   "version": 1,
   "topo": "fiti.json",
+  "datapath": "bmv2",
   "isolation": "vlan",
-  "controller": {
-    "mode": "stp"
+  "p4": {
+    "json": "build/fiti_slice.json",
+    "thrift_base": null,
+    "log_level": "info",
+    "log_dir": null,
+    "pcap": false,
+    "pcap_dir": "pcap",
+    "spanning_root": null
   },
   "defaults": {
     "vlan_base": 100,
@@ -55,6 +62,15 @@
       "hosts": [
         "xa", "cd", "chq", "lzh", "gyn",
         "kmn", "lsa", "xnn", "ych", "wlq"
+      ]
+    },
+    {
+      "id": "demo",
+      "name": "跨区域/每节点多切片演示",
+      "vlan": 104,
+      "subnet": "10.5.0.0/24",
+      "hosts": [
+        "bj", "sh", "xa", "gz", "wh", "cd"
       ]
     }
   ]

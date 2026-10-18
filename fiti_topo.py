@@ -1,62 +1,69 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""用 Mininet 模拟 fiti.json 描述的 FITI 骨干拓扑。
+"""用 Mininet + bmv2 模拟 fiti.json 描述的 FITI 骨干拓扑。
 
 拓扑规模: 41 个节点 / 43 条链路 (以 fiti.json 的 nodes/links 为准)。
 
 建模方式:
-  - 每个节点 <id> 建一台 OVS 交换机 s<id>, dpid 固定为 <id> 的 16 位十六进制;
+  - 每个节点 <id> 运行一台 bmv2 simple_switch, 名为 s<id>;
+  - 每台交换机加载同一个 P4 程序 (p4src/fiti_slice.p4), 做 VLAN 感知的二层转发;
   - 每个节点再挂一台主机, 主机名取节点的 abbr (如 bj/sh/xa), IP 为 10.0.0.<id>/24;
   - 交换机之间按 fiti.json 的 links 互联, link.weight (4/2/1) 映射为链路带宽等级;
-  - 交换机与主机之间也走 TCLink, 但不限带宽。
+  - bmv2 没有 STP, 控制面 (fiti_p4.py) 预先计算生成树并只启用树边;
+  - 每台交换机通过 Thrift (simple_switch_CLI) 下发端口、MAC 与泛洪规则.
+
+  "每节点多切片" 由 p4src/fiti_slice.p4 的 VLAN 逻辑实现: 同一台 bmv2 交换机可以
+  挂接任意多个切片的主机, 每个主机接在独立的 access 端口上, 交换机间链路是 trunk.
 
 命令行用法:
-  sudo python3 fiti_topo.py                    # 启动 Mininet CLI (默认 OVS standalone + STP)
-  sudo python3 fiti_topo.py --pingall          # 启动后等 STP 收敛并全量 ping, 再进 CLI
+  sudo python3 fiti_topo.py                    # 启动 Mininet CLI
+  sudo python3 fiti_topo.py --pingall          # 启动后全量 ping, 再进 CLI
+  sudo python3 fiti_topo.py --random-traffic   # 不同节点随机互 ping 后退出
+  sudo python3 fiti_topo.py --random-traffic --traffic-continuous  # 持续发包
   sudo python3 fiti_topo.py --no-tc            # 使用普通链路, 不做带宽限制
-  sudo python3 fiti_topo.py --no-hosts         # 只建 41 台交换机, 构建纯骨干网
-  sudo python3 fiti_topo.py --dump             # 只打印拓扑统计, 不启动 Mininet (免 root)
-  sudo python3 fiti_topo.py --slices slices.json   # 统一入口: 转交 fiti_slice.py 运行切片模式
+  sudo python3 fiti_topo.py --no-hosts         # 只建 41 台 bmv2 交换机
+  python3 fiti_topo.py --dump                  # 只打印拓扑统计, 不启动 Mininet (免 root)
+  sudo python3 fiti_topo.py --slices slices.json   # 统一入口: 转交 fiti_slice.py
 
-  sudo python3 fiti_topo.py --controller remote --controller-ip 127.0.0.1 --controller-port 6653
-  sudo python3 fiti_topo.py --controller default   # Mininet 自带 ovs-testcontroller
   sudo python3 fiti_topo.py --bw-map 4:1000,2:500,1:100
+  sudo python3 fiti_topo.py --pcap --pcap-dir pcap
+  sudo python3 fiti_topo.py --thrift-base 10000 --p4-log-level warn
 
-  也可以作为 mn 的 custom 拓扑加载:
+  也可以作为 mn 的 custom 拓扑加载 (需要自行提供 P4Switch):
   sudo mn --custom fiti_topo.py --topo fiti --link tc
 
 ======================================================================
 作为库使用 (其他 Python 代码直接 import):
 ======================================================================
 
-  from fiti_topo import build_net, fiti_network, build_topology
+  from fiti_topo import build_net, fiti_network, get_host
 
-  # 1) 拿到一个已经启动的 Mininet 实例, 用完自己 stop()
-  from fiti_topo import build_net, get_host
-  net = build_net(controller='remote')          # 对接外部控制器
-  bj, sh = get_host(net, 1), get_host(net, 2)   # 按节点 id 取主机
+  net = build_net()                              # 已启动并下发好 P4 规则
+  bj, sh = get_host(net, 1), get_host(net, 2)
   print(bj.cmd('ping -c 3', sh.IP()))
   net.stop()
 
-  # 2) 上下文管理器, 自动 stop()
-  with fiti_network(controller='stp', wait_connected=60) as net:
+  with fiti_network() as net:
       net.pingAll()
 
-  # 3) 只要 Topo 对象, 自己组装 Mininet / 传给别的工具
-  from mininet.net import Mininet
-  from mininet.node import RemoteController
+  # 只要 Topo 对象, 自己组装 Mininet (需要 fiti_p4 的交换机工厂):
+  from fiti_topo import build_topology, build_base_host_plan
+  from fiti_p4 import compile_p4, make_switch_factory
+  from p4_mininet import P4Host
   topo = build_topology(with_hosts=True)
-  net = Mininet(topo=topo, controller=RemoteController)
+  net = Mininet(topo=topo, host=P4Host,
+                switch=make_switch_factory(compile_p4(), 9090),
+                controller=None)
 
-  # 4) 纯元数据接口 (不需要 root)
+  # 纯元数据接口 (不需要 root)
   from fiti_topo import (load_topology, compute_degrees, node_by_id,
                          switch_name, host_name, host_ip)
 
   data = load_topology()
   print(len(data['nodes']), 'nodes,', len(data['links']), 'links')
-  print(node_by_id(data, 1)['name'], host_name(data, 1), host_ip(1))
 
-注意: 若上次异常退出导致 OVS 残留, 先执行 sudo mn -c 清理。
+注意: bmv2 进程不会由 sudo mn -c 清理; 异常退出后可用
+sudo pkill -f simple_switch 清理。
 """
 
 import argparse
@@ -64,23 +71,31 @@ import json
 import os
 import sys
 from contextlib import contextmanager
-from functools import partial
 
 from mininet.cli import CLI
 from mininet.link import Link, TCLink
 from mininet.log import info, setLogLevel, warn
 from mininet.net import Mininet
-from mininet.node import (DefaultController, OVSBridge, OVSSwitch,
-                          RemoteController)
 from mininet.topo import Topo
+
+from fiti_log import Progress, quiet_mininet_console
+from fiti_p4 import (DEFAULT_P4_JSON, DEFAULT_THRIFT_BASE,
+                     choose_thrift_base, compile_p4, install_fabric,
+                     make_switch_factory)
+from fiti_traffic import TrafficHost, run_random_traffic
+from p4_mininet import P4Host
 
 __all__ = [
     'DEFAULT_TOPO_FILE',
     'DEFAULT_BW_MAP',
+    'DEFAULT_P4_JSON',
+    'DEFAULT_THRIFT_BASE',
     'FitiTopo',
     'build_topology',
     'build_net',
     'fiti_network',
+    'build_base_host_plan',
+    'build_traffic_hosts',
     'load_topology',
     'validate_topology',
     'compute_degrees',
@@ -102,10 +117,12 @@ DEFAULT_TOPO_FILE = os.path.join(SCRIPT_DIR, 'fiti.json')
 # link.weight -> 带宽 (Mbps)。weight 是 fiti.json 里的链路容量等级。
 DEFAULT_BW_MAP = {4: 100, 2: 50, 1: 10}
 DEFAULT_BW_MAP_STR = '4:100,2:50,1:10'
-DEFAULT_STP_WAIT = 60
 
 # 主机 IP 模板: 10.0.0.<节点id>/24
 HOST_IP_FORMAT = '10.0.0.%d/24'
+
+# 基础拓扑中所有主机同属一个 VLAN
+BASE_VLAN = 100
 
 
 # --------------------------------------------------------------------------
@@ -159,6 +176,42 @@ def get_host(net, node_id, data=None):
 def get_switch(net, node_id):
     """从 Mininet 实例中按节点 id 取交换机对象, 如 get_switch(net, 1) -> s1。"""
     return net.get(switch_name(node_id))
+
+
+def build_base_host_plan(data, vlan=BASE_VLAN):
+    """基础拓扑的主机规划: 每个节点一台主机, 全部在同一个 VLAN。"""
+    plan = {}
+    for node in data['nodes']:
+        node_id = str(node['id'])
+        name = node['abbr']
+        plan[name] = {
+            'host': name,
+            'slice': None,
+            'slice_id': 'base',
+            'slice_index': 1,
+            'node_id': int(node_id),
+            'node_name': node['name'],
+            'abbr': node['abbr'],
+            'switch': switch_name(node_id),
+            'vlan': int(vlan),
+            'ip': host_ip(node_id),
+        }
+    return plan
+
+
+def build_traffic_hosts(net, host_plan, group='base'):
+    """把主机规划转换成 fiti_traffic.TrafficHost 列表。"""
+    entries = []
+    for name, meta in host_plan.items():
+        host = net.get(name)
+        if host is None:
+            continue
+        entries.append(TrafficHost(name=name,
+                                   node_id=int(meta['node_id']),
+                                   group=group,
+                                   host=host,
+                                   ip=host.IP()))
+    return entries
 
 
 # --------------------------------------------------------------------------
@@ -256,6 +309,7 @@ def dump_topology(data, bw_map=None, path=None):
         weight_count[weight] = weight_count.get(weight, 0) + 1
 
     print('拓扑文件: %s' % os.path.abspath(path or DEFAULT_TOPO_FILE))
+    print('数据平面: bmv2 simple_switch + p4src/fiti_slice.p4')
     print('节点: %d   链路: %d' % (len(nodes), len(links)))
     print('链路 weight 分布: %s'
           % ', '.join('weight=%s: %d 条' % (w, c)
@@ -299,10 +353,9 @@ class FitiTopo(Topo):
       data:       fiti.json 解析后的 dict; 为 None 时读取同目录 fiti.json
       with_hosts: 是否为每个节点挂一台主机
       bw_map:     {weight: 带宽Mbps}, 用于设置交换机间链路带宽
-      stp:        是否开启 STP (拓扑有环, standalone 模式下必须开启)
     """
 
-    def build(self, data=None, with_hosts=True, bw_map=None, stp=True):
+    def build(self, data=None, with_hosts=True, bw_map=None):
         if data is None:
             data = load_topology()
         if bw_map is None:
@@ -311,7 +364,7 @@ class FitiTopo(Topo):
 
         for node in data['nodes']:
             nid = str(node['id'])
-            self.addSwitch(switch_name(nid), dpid=switch_dpid(nid), stp=stp)
+            self.addSwitch(switch_name(nid), dpid=switch_dpid(nid))
             if with_hosts:
                 host = host_name(data, nid)
                 self.addHost(host, ip=host_ip(nid))
@@ -324,50 +377,47 @@ class FitiTopo(Topo):
             opts = {}
             bw = bw_map.get(link.get('weight'))
             if bw:
-                # 用 TBF 代替默认 HTB，避免 "quantum of class ... is big" 警告
+                # 用 TBF 代替默认 HTB, 避免 "quantum of class ... is big" 警告
                 opts = {'bw': bw, 'use_tbf': True, 'latency_ms': 20}
             self.addLink(switch_name(src), switch_name(dst), **opts)
 
 
-# 供 `mn --custom fiti_topo.py --topo fiti` 使用
+# 供 `mn --custom fiti_topo.py --topo fiti` 使用 (需要外部提供 P4Switch)
 topos = {'fiti': FitiTopo}
 
 
-def build_topology(data=None, with_hosts=True, bw_map=None, stp=True):
+def build_topology(data=None, with_hosts=True, bw_map=None):
     """构造并返回 FitiTopo 对象 (不启动任何进程, 无需 root)。
 
     data 为 None 时读取 DEFAULT_TOPO_FILE; bw_map 为 None 时使用 DEFAULT_BW_MAP。
     """
-    return FitiTopo(data=data, with_hosts=with_hosts,
-                    bw_map=bw_map, stp=stp)
+    return FitiTopo(data=data, with_hosts=with_hosts, bw_map=bw_map)
 
 
 def build_net(data=None, with_hosts=True, bw_map=None, use_tc=True,
-              controller='stp', controller_ip='127.0.0.1',
-              controller_port=6653, stp=True, wait_connected=False,
-              stp_wait=DEFAULT_STP_WAIT, auto_set_macs=True, switch_cls=None,
-              start=True):
-    """创建 (并默认启动) FITI 拓扑对应的 Mininet 网络。
+              p4_json=None, thrift_base=None, p4_log_level='info',
+              pcap_dump=None, log_dir=None, spanning_root=None,
+              install_rules=True, start=True):
+    """创建 (并默认启动) FITI 拓扑对应的 bmv2 网络。
 
     参数:
-      data:            拓扑 dict; None 时读取 DEFAULT_TOPO_FILE
-      with_hosts:      是否为每个节点挂主机
-      bw_map:          {weight: Mbps}; None 时使用 DEFAULT_BW_MAP
-      use_tc:          是否使用 TCLink (False 时不做带宽限制)
-      controller:      'stp' (OVS standalone + STP, 默认)
-                       'default' (Mininet 自带 ovs-testcontroller)
-                       'remote'  (外部控制器, 配合 controller_ip/port)
-                       或任意 Controller 类 / 实例 / partial
-      stp:             是否给交换机开启 STP (拓扑有环)
-      wait_connected:  True 表示等待 STP 收敛 (stp 模式, 上限 stp_wait 秒);
-                       数字表示等待秒数; False 表示不等待
-      stp_wait:        stp 模式等待 STP 收敛的最长秒数
-      auto_set_macs:   是否按 IP 自动生成确定性 MAC
-      switch_cls:      自定义交换机类, None 时按 controller 自动选择
-      start:           True 时创建后立即 net.start(); False 则只 build
+      data:          拓扑 dict; None 时读取 DEFAULT_TOPO_FILE
+      with_hosts:    是否为每个节点挂主机
+      bw_map:        {weight: Mbps}; None 时使用 DEFAULT_BW_MAP
+      use_tc:        是否使用 TCLink (False 时不做带宽限制)
+      p4_json:       编译后的 P4 JSON; None 时编译并缓存在 build/fiti_slice.json
+      thrift_base:   bmv2 Thrift 端口基址, 交换机 s<id> 使用 base+id;
+                     None 时自动寻找一段空闲端口
+      p4_log_level:  bmv2 日志级别
+      pcap_dump:     抓包目录; None 表示不抓包
+      log_dir:       bmv2 日志目录; None 时使用项目 build/logs/
+      spanning_root: 生成树根节点 id; None 时使用第一个节点
+      install_rules: 启动后是否下发 P4 流表
+      start:         True 时创建后立即 net.start(); False 则只 build
 
     返回:
       Mininet 实例; 调用方负责 net.stop()。
+      已启动且 install_rules=True 时, net.p4_fabric 保存规则规划结果。
     """
     if data is None:
         data = load_topology()
@@ -378,44 +428,60 @@ def build_net(data=None, with_hosts=True, bw_map=None, use_tc=True,
     elif bw_map is None:
         bw_map = DEFAULT_BW_MAP
 
-    topo = build_topology(data=data, with_hosts=with_hosts,
-                          bw_map=bw_map, stp=stp)
+    topo = build_topology(data=data, with_hosts=with_hosts, bw_map=bw_map)
 
-    if isinstance(controller, str):
-        if controller == 'stp':
-            switch_cls = switch_cls or OVSBridge
-            controller_obj = None
-            # True -> 用 stp_wait 秒作为 STP 收敛等待上限
-            wait = stp_wait if wait_connected is True else wait_connected
-        elif controller == 'default':
-            switch_cls = switch_cls or OVSSwitch
-            controller_obj = DefaultController
-            wait = wait_connected
-        elif controller == 'remote':
-            switch_cls = switch_cls or OVSSwitch
-            controller_obj = partial(RemoteController,
-                                     ip=controller_ip,
-                                     port=controller_port)
-            wait = wait_connected
-        else:
-            raise ValueError(
-                "controller 必须是 'stp' / 'default' / 'remote' "
-                '或自定义 Controller 类/实例')
-    else:
-        switch_cls = switch_cls or OVSSwitch
-        controller_obj = controller
-        wait = wait_connected
-
-    net = Mininet(topo=topo,
-                  switch=switch_cls,
-                  controller=controller_obj,
-                  link=TCLink if use_tc else Link,
-                  autoSetMacs=auto_set_macs,
-                  waitConnected=wait,
-                  build=False)
-    net.build()
+    json_path = p4_json or DEFAULT_P4_JSON
     if start:
-        net.start()
+        json_path = compile_p4(out=json_path)
+
+    base = thrift_base
+    if base is None:
+        base = choose_thrift_base(data)
+
+    if pcap_dump:
+        pcap_dump = os.path.abspath(pcap_dump)
+        os.makedirs(pcap_dump, exist_ok=True)
+
+    switch_factory = make_switch_factory(json_path, base,
+                                         p4_log_level=p4_log_level,
+                                         pcap_dump=pcap_dump,
+                                         log_dir=log_dir)
+    net = Mininet(topo=topo,
+                  switch=switch_factory,
+                  host=P4Host,
+                  controller=None,
+                  link=TCLink if use_tc else Link,
+                  autoSetMacs=True,
+                  build=False)
+    net.p4_json = os.path.abspath(json_path)
+    net.thrift_base = base
+    net.p4_host_plan = build_base_host_plan(data) if with_hosts else {}
+    net.p4_fabric = None
+
+    build_names = set(topo.hosts()) | set(topo.switches())
+    try:
+        with quiet_mininet_console(log_dir, allow_build_lists=True,
+                                   allow_names=build_names):
+            net.build()
+        if start:
+            with quiet_mininet_console(log_dir):
+                with Progress(
+                        '*** 启动 bmv2 交换机',
+                        done='*** %d 台 bmv2 交换机已启动'
+                             % len(data['nodes'])):
+                    net.start()
+
+        if start and with_hosts and install_rules:
+            with Progress('*** 下发 P4 流表',
+                          total=len(data['nodes']),
+                          done='*** P4 流表下发完成') as progress:
+                net.p4_fabric = install_fabric(
+                    net, data, net.p4_host_plan,
+                    json_path=json_path, root=spanning_root,
+                    log_dir=log_dir, progress=progress)
+    except (Exception, KeyboardInterrupt):
+        net.stop()
+        raise
     return net
 
 
@@ -424,7 +490,7 @@ def fiti_network(**kwargs):
     """build_net() 的上下文管理器, 退出时自动 net.stop()。
 
     用法:
-        with fiti_network(controller='stp', wait_connected=60) as net:
+        with fiti_network() as net:
             net.pingAll()
     """
     net = build_net(**kwargs)
@@ -457,7 +523,7 @@ def parse_bw_map(text):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description='用 Mininet 模拟 fiti.json 中的 FITI 骨干拓扑',
+        description='用 Mininet + bmv2 模拟 fiti.json 中的 FITI 骨干拓扑',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='切片模式:\n'
                '  python3 fiti_topo.py --slices slices.json [选项]\n'
@@ -472,22 +538,40 @@ def build_parser():
                         help='使用普通链路 (不做带宽限制, 不需要 TCLink)')
     parser.add_argument('--bw-map', default=DEFAULT_BW_MAP_STR,
                         help='weight 到带宽(Mbps)的映射, 默认 4:100,2:50,1:10')
-    parser.add_argument('--controller', choices=('stp', 'default', 'remote'),
-                        default='stp',
-                        help='stp=无控制器, OVS standalone 学习交换 + STP (默认); '
-                             'default=内置 ovs-testcontroller; '
-                             'remote=外部控制器')
-    parser.add_argument('--controller-ip', default='127.0.0.1',
-                        help='--controller remote 时外部控制器地址')
-    parser.add_argument('--controller-port', type=int, default=6653,
-                        help='--controller remote 时外部控制器端口')
-    parser.add_argument('--wait-connected', action='store_true',
-                        help='启动后等待交换机就绪 (stp 模式等待 STP 收敛; '
-                             'default/remote 模式等待连上控制器)')
-    parser.add_argument('--stp-wait', type=int, default=DEFAULT_STP_WAIT,
-                        help='stp 模式下等待 STP 收敛的最长秒数, 默认 %(default)s')
+    parser.add_argument('--p4-json', default=DEFAULT_P4_JSON,
+                        help='P4 编译产物的输出/缓存路径 (默认: %(default)s)')
+    parser.add_argument('--thrift-base', type=int, default=None,
+                        help='bmv2 Thrift 端口基址 (默认自动分配, 交换机 s<id> 用 base+id)')
+    parser.add_argument('--p4-log-level', default='info',
+                        choices=('trace', 'debug', 'info', 'warn', 'error', 'off'),
+                        help='bmv2 日志级别 (默认: %(default)s)')
+    parser.add_argument('--pcap', action='store_true',
+                        help='让 bmv2 抓包到 --pcap-dir')
+    parser.add_argument('--pcap-dir', default='pcap',
+                        help='抓包目录 (默认: %(default)s)')
+    parser.add_argument('--log-dir', default=None,
+                        help='bmv2 日志目录 (默认: 项目 build/logs/)')
+    parser.add_argument('--spanning-root', type=int, default=None,
+                        help='生成树根节点 id (默认使用第一个节点)')
     parser.add_argument('--pingall', action='store_true',
                         help='启动完成后先执行 pingall, 再进入 CLI')
+    parser.add_argument('--random-traffic', action='store_true',
+                        help='启动后在不同节点之间随机选主机互 ping，完成后退出')
+    parser.add_argument('--traffic-continuous', action='store_true',
+                        help='持续随机发包；每轮结束后重新选流，Ctrl-C 停止')
+    parser.add_argument('--traffic-scope', choices=('global', 'slice'),
+                        default='global',
+                        help='随机流范围（基础模式所有主机同组，默认 global）')
+    parser.add_argument('--traffic-flows', type=int, default=10,
+                        help='随机流条数（默认: %(default)s）')
+    parser.add_argument('--traffic-duration', type=float, default=5.0,
+                        help='每条流的近似持续时间，秒（默认: %(default)s）')
+    parser.add_argument('--traffic-interval', type=float, default=0.2,
+                        help='ping 发包间隔，秒（默认: %(default)s）')
+    parser.add_argument('--traffic-size', type=int, default=56,
+                        help='ping 负载大小，字节（默认: %(default)s）')
+    parser.add_argument('--traffic-seed', type=int, default=None,
+                        help='随机种子；省略时自动生成并打印')
     parser.add_argument('--log', default='info',
                         choices=('debug', 'info', 'warning', 'error', 'critical'),
                         help='Mininet 日志级别')
@@ -504,6 +588,8 @@ def main(argv=None):
 
     args = build_parser().parse_args(argv)
     setLogLevel(args.log)
+    if args.traffic_continuous:
+        args.random_traffic = True
 
     data = load_topology(args.topo_file)
     bw_map = {} if args.no_tc else parse_bw_map(args.bw_map)
@@ -514,34 +600,39 @@ def main(argv=None):
         return 0
 
     if os.geteuid() != 0:
-        raise SystemExit('Mininet 需要 root 权限, 请使用 sudo 运行。'
+        raise SystemExit('Mininet/bmv2 需要 root 权限, 请使用 sudo 运行。'
                          '(只想查看拓扑可以加 --dump)')
 
-    # stp 模式下 --pingall 也自动等待 STP 收敛; 其他模式不隐式等待控制器
-    if args.controller == 'stp':
-        wait_connected = args.wait_connected or args.pingall
-    else:
-        wait_connected = args.wait_connected
-
-    info('*** 构建拓扑: %d 台交换机, %d 台主机, 骨干链路 %d 条\n'
-         % (len(data['nodes']),
-            len(data['nodes']) if not args.no_hosts else 0,
-            len(data['links'])))
-    if args.controller == 'stp' and not wait_connected:
-        info('*** STP 模式: 首次 ping 前通常需等待 30-45 秒收敛 '
-             '(或用 --wait-connected / --pingall 自动等待)\n')
-
-    net = build_net(data=data,
-                    with_hosts=not args.no_hosts,
-                    bw_map=bw_map,
-                    use_tc=not args.no_tc,
-                    controller=args.controller,
-                    controller_ip=args.controller_ip,
-                    controller_port=args.controller_port,
-                    wait_connected=wait_connected,
-                    stp_wait=args.stp_wait,
-                    start=True)
+    net = None
     try:
+        net = build_net(data=data,
+                        with_hosts=not args.no_hosts,
+                        bw_map=bw_map,
+                        use_tc=not args.no_tc,
+                        p4_json=args.p4_json,
+                        thrift_base=args.thrift_base,
+                        p4_log_level=args.p4_log_level,
+                        pcap_dump=args.pcap_dir if args.pcap else None,
+                        log_dir=args.log_dir,
+                        spanning_root=args.spanning_root,
+                        start=True)
+
+        if args.random_traffic:
+            if not net.hosts:
+                warn('*** 未创建主机 (--no-hosts), 无法执行随机通信\n')
+                return 1
+            hosts = build_traffic_hosts(net, net.p4_host_plan)
+            _, ok = run_random_traffic(
+                hosts,
+                count=args.traffic_flows,
+                duration=args.traffic_duration,
+                interval=args.traffic_interval,
+                size=args.traffic_size,
+                scope=args.traffic_scope,
+                seed=args.traffic_seed,
+                continuous=args.traffic_continuous)
+            return 0 if ok else 1
+
         if args.pingall:
             if not net.hosts:
                 warn('*** 未创建主机 (--no-hosts), 跳过 pingall\n')
@@ -549,9 +640,13 @@ def main(argv=None):
                 info('*** 全量 pingall (%d 台主机)\n' % len(net.hosts))
                 net.pingAll()
         CLI(net)
+        return 0
+    except KeyboardInterrupt:
+        print('\n*** 已中断', file=sys.stderr)
+        return 130
     finally:
-        net.stop()
-    return 0
+        if net is not None:
+            net.stop()
 
 
 if __name__ == '__main__':
