@@ -1,6 +1,6 @@
 # FITI Mininet + bmv2 拓扑
 
-用 Mininet 模拟 `fiti.json` 中的 FITI 骨干拓扑。每个节点运行一台 bmv2
+用 Mininet 模拟 `configs/fiti.json` 中的 FITI 骨干拓扑。每个节点运行一台 bmv2
 `simple_switch` / `simple_switch_grpc`，加载 `p4src/fiti_slice.p4` 做
 VLAN 感知 L2 转发和交换机逐跳 SRv6；同一台交换机可以承载多个切片主机，
 切片支持运行中增删。
@@ -16,25 +16,38 @@ VLAN 感知 L2 转发和交换机逐跳 SRv6；同一台交换机可以承载多
 | 数据平面 | bmv2，P4-16 / v1model，L2 + SRv6                                  |
 | 控制平面 | 静态模式 Thrift；运行时模式 P4Runtime + Unix socket                |
 
-文件：
+目录结构：
 
-- `fiti.json`：拓扑数据
-- `fiti_topo.py`：基础拓扑、CLI 与库接口
-- `fiti_slice.py`：网络切片 CLI 与库接口
-- `fiti_p4.py`：P4 编译、生成树、端口映射、静态 Thrift 流表
-- `fiti_p4runtime.py`：P4Runtime 客户端
-- `fiti_control.py`：运行时切片控制器（增删切片、SID/VRF 分配）
-- `fiti_runtime.py`：P4Runtime + 动态切片运行时入口
-- `fiti_ctl.py`：Unix socket 控制客户端
-- `fiti_traffic.py`：随机通信模式
-- `fiti_log.py`：控制台输出与日志文件
-- `p4_mininet.py`：Mininet 的 `P4Host` / `P4Switch` / `P4RuntimeSwitch`
-- `p4src/fiti_slice.p4`：VLAN L2 + 多段 SRv6 P4 程序
-- `requirements-p4runtime.txt`：P4Runtime Python 依赖
-- `slices.json`：切片配置示例
-- `SLICING_DESIGN.md`：切片与 P4 数据平面设计
-- `Makefile`：编译、运行、检查、清理
-- `fiti_topology.svg`：平面拓扑图
+```text
+fiti/                       Python 实现包
+├── topo.py                 基础拓扑、CLI 与库接口
+├── slice.py                切片实现、CLI 与库接口
+├── p4.py                   P4 编译、生成树、端口映射、静态流表
+├── p4runtime.py            P4Runtime 客户端
+├── control.py              运行时切片控制器
+├── runtime.py              P4Runtime + 动态切片运行时
+├── ctl.py                  Unix socket 控制客户端
+├── traffic.py              随机通信模式
+├── log.py                  控制台与日志
+├── p4_mininet.py           Mininet P4Host / P4Switch / P4RuntimeSwitch
+└── paths.py                项目路径常量
+
+configs/
+├── fiti.json               拓扑数据
+└── slices.json             切片配置示例
+
+docs/
+├── SLICING_DESIGN.md       切片与 P4 数据平面设计
+└── fiti_topology.svg       平面拓扑图
+
+p4src/fiti_slice.p4         VLAN L2 + 多段 SRv6 P4 程序
+fiti_topo.py                基础拓扑 CLI 兼容入口
+fiti_slice.py               切片 CLI 兼容入口
+fiti_runtime.py             P4Runtime 运行时入口
+fiti_ctl.py                 Unix socket 控制入口
+Makefile                    编译、运行、检查、清理
+requirements-p4runtime.txt  P4Runtime Python 依赖
+```
 
 ## 环境要求
 
@@ -84,12 +97,12 @@ sudo python3 fiti_topo.py --pingall
 sudo python3 fiti_topo.py --random-traffic
 
 # 切片拓扑（静态 Thrift 模式）
-sudo python3 fiti_slice.py --slices slices.json
-sudo python3 fiti_slice.py --slices slices.json --random-traffic
-sudo python3 fiti_slice.py --slices slices.json --check
+sudo python3 fiti_slice.py --slices configs/slices.json
+sudo python3 fiti_slice.py --slices configs/slices.json --random-traffic
+sudo python3 fiti_slice.py --slices configs/slices.json --check
 
-# P4Runtime 运行时：初始切片来自 slices.json，支持运行中增删
-sudo .venv-p4runtime/bin/python fiti_runtime.py --slices slices.json
+# P4Runtime 运行时：初始切片来自 configs/slices.json，支持运行中增删
+sudo .venv-p4runtime/bin/python fiti_runtime.py --slices configs/slices.json
 
 # 另一个终端：查询 / 增删切片
 python3 fiti_ctl.py list
@@ -98,11 +111,11 @@ python3 fiti_ctl.py add-slice --id demo2 --vlan 105 \
 python3 fiti_ctl.py remove-slice --id demo2
 ```
 
-`fiti_topo.py` 检测到 `--slices` 时会转交 `fiti_slice.py`：
+`fiti/topo.py` 检测到 `--slices` 时会转交 `fiti/slice.py`：
 
 ```bash
-python3 fiti_topo.py --slices slices.json --dump
-sudo python3 fiti_topo.py --slices slices.json --check
+python3 fiti_topo.py --slices configs/slices.json --dump
+sudo python3 fiti_topo.py --slices configs/slices.json --check
 ```
 
 ## 命令行参数
@@ -111,7 +124,7 @@ sudo python3 fiti_topo.py --slices slices.json --check
 
 | 参数                     | 默认值                  | 说明                                                   |
 | ------------------------ | ----------------------- | ------------------------------------------------------ |
-| `--topo-file PATH`       | `fiti.json`             | 拓扑 JSON 路径                                         |
+| `--topo-file PATH`       | `configs/fiti.json`             | 拓扑 JSON 路径                                         |
 | `--dump`                 | 关闭                    | 只打印拓扑统计并退出                                   |
 | `--no-hosts`             | 关闭                    | 只创建交换机                                           |
 | `--no-tc`                | 关闭                    | 不做链路带宽限制                                       |
@@ -127,14 +140,14 @@ sudo python3 fiti_topo.py --slices slices.json --check
 | `--traffic-continuous`   | 关闭                    | 持续随机发包，隐含 `--random-traffic`                  |
 | `--log LEVEL`            | `info`                  | Mininet 日志级别                                       |
 
-bmv2 没有 STP：`fiti_p4.py` 按 `fiti.json` 计算 BFS 生成树，只启用树边；
+bmv2 没有 STP：`fiti/p4.py` 按 `configs/fiti.json` 计算 BFS 生成树，只启用树边；
 FITI 拓扑中 3 条非树边在数据平面被丢弃。
 
 ### 切片模式
 
 | 参数 | 说明 |
 | --- | --- |
-| `--slices PATH` | 切片配置，默认 `slices.json` |
+| `--slices PATH` | 切片配置，默认 `configs/slices.json` |
 | `--dump` | 只打印规划并退出（免 root） |
 | `--check` | 连通性 + 接入端口规则 + 跨切片隔离检查 |
 | `--check-srv6` | 在 `--check` 基础上检查 SRv6 |
@@ -156,12 +169,12 @@ FITI 拓扑中 3 条非树边在数据平面被丢弃。
 - SRv6：`encap` 做 H.Encaps，`sid_fib` 转发 SID，`local_sid` 执行
   End/End.X，`vrf_fib` 做 End.DT6。
 
-完整流水线和表结构见 [SLICING_DESIGN.md](SLICING_DESIGN.md)。
+完整流水线和表结构见 [SLICING_DESIGN.md](docs/SLICING_DESIGN.md)。
 
 ## 作为库使用
 
 ```python
-from fiti_topo import build_net, fiti_network, get_host
+from fiti.topo import build_net, fiti_network, get_host
 
 net = build_net()                    # 已启动并下发 P4 规则
 bj, sh = get_host(net, 1), get_host(net, 2)
@@ -179,7 +192,7 @@ with fiti_network() as net:          # 自动清理
 ## 网络切片
 
 在 41 节点拓扑上用 VLAN 隔离多个切片。每个切片有独立主机、IP 子网和 VLAN，
-共享物理链路带宽。设计细节见 [SLICING_DESIGN.md](SLICING_DESIGN.md)。
+共享物理链路带宽。设计细节见 [SLICING_DESIGN.md](docs/SLICING_DESIGN.md)。
 
 ### 示例切片
 
@@ -236,9 +249,9 @@ with fiti_network() as net:          # 自动清理
 ### 库用法
 
 ```python
-from fiti_slice import load_slice_config, build_slice_net, SliceManager
+from fiti.slice import load_slice_config, build_slice_net, SliceManager
 
-cfg = load_slice_config('slices.json')
+cfg = load_slice_config('configs/slices.json')
 net = build_slice_net(cfg)              # 已启动并下发 P4 规则
 mgr = SliceManager(net, cfg)
 
@@ -254,20 +267,20 @@ net.stop()
 
 ## P4Runtime 运行时与动态切片
 
-`fiti_runtime.py` 启动固定 41 节点拓扑，每节点运行 `simple_switch_grpc`，
+`fiti/runtime.py` 启动固定 41 节点拓扑，每节点运行 `simple_switch_grpc`，
 通过 P4Runtime 下发 pipeline、表项和 multicast group；主机 access 端口动态
 创建，端口热插拔走 Thrift 的 `port_add` / `port_remove`。
 
 ```bash
-sudo .venv-p4runtime/bin/python fiti_runtime.py --slices slices.json
+sudo .venv-p4runtime/bin/python fiti_runtime.py --slices configs/slices.json
 # 或后台模式
-sudo .venv-p4runtime/bin/python fiti_runtime.py --slices slices.json --no-cli
+sudo .venv-p4runtime/bin/python fiti_runtime.py --slices configs/slices.json --no-cli
 ```
 
 启动后：
 
-- `slices.json` 中的切片作为初始切片创建；
-- 运行时新增切片只保存在内存，不写回 `slices.json`；
+- `configs/slices.json` 中的切片作为初始切片创建；
+- 运行时新增切片只保存在内存，不写回 `configs/slices.json`；
 - 控制接口默认是 `/tmp/fiti.sock`；
 - 切片主机名统一为 `<slice_id>_<abbr>`。
 
@@ -349,14 +362,14 @@ python3 fiti_ctl.py remove-slice --id demo2
 sudo python3 fiti_topo.py --random-traffic
 
 # 切片内
-sudo python3 fiti_slice.py --slices slices.json --random-traffic
+sudo python3 fiti_slice.py --slices configs/slices.json --random-traffic
 
 # 允许跨切片：同切片期望可达，跨切片期望隔离
-sudo python3 fiti_slice.py --slices slices.json \
+sudo python3 fiti_slice.py --slices configs/slices.json \
     --random-traffic --traffic-scope global
 
 # 持续发包，Ctrl-C 停止
-sudo python3 fiti_slice.py --slices slices.json --traffic-continuous
+sudo python3 fiti_slice.py --slices configs/slices.json --traffic-continuous
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -399,7 +412,7 @@ RuntimeCmd: table_dump IngressImpl.port_cfg
 RuntimeCmd: table_dump IngressImpl.l2_fwd
 RuntimeCmd: mc_dump
 
-sudo python3 fiti_slice.py --slices slices.json --pcap --pcap-dir pcap
+sudo python3 fiti_slice.py --slices configs/slices.json --pcap --pcap-dir pcap
 ```
 
 ## 已知限制
@@ -410,6 +423,6 @@ sudo python3 fiti_slice.py --slices slices.json --pcap --pcap-dir pcap
 - 所有切片共享物理链路带宽。
 - 每台交换机是一个独立的 bmv2 进程，41 节点占用较多内存和 CPU。
 - P4Runtime 运行时需要 `grpcio` / `p4runtime`，并且要保留 Thrift 做端口热插拔。
-- 运行时新增切片不持久化，重启后只恢复 `slices.json` 中的初始切片。
+- 运行时新增切片不持久化，重启后只恢复 `configs/slices.json` 中的初始切片。
 - SRv6 封装增加约 40 + 8 + 16N 字节，主机 MTU 需要相应调小。
 - SRv6 无动态路由/NDP 控制协议，SID 下一跳和邻居信息由控制面静态计算。

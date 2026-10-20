@@ -9,7 +9,7 @@ import threading
 import time
 from contextlib import contextmanager
 
-from p4_mininet import DEFAULT_LOG_DIR
+from fiti.paths import DEFAULT_LOG_DIR
 
 __all__ = ['ensure_log_dir', 'quiet_mininet_console', 'open_detail_log',
            'Progress']

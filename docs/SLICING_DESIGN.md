@@ -6,14 +6,19 @@
 
 配套文件：
 
-- `p4src/fiti_slice.p4`：VLAN 感知 L2 转发 P4 程序
-- `fiti_p4.py`：P4 编译、生成树、端口映射、流表下发与运行检查
-- `p4_mininet.py`：Mininet 的 `P4Host` / `P4Switch`
-- `fiti_slice.py`：切片实现、CLI 与库接口
-- `fiti_traffic.py`：随机通信模式（不同节点随机互 ping）
-- `fiti_log.py`：控制台摘要与详细日志分离
-- `fiti_topo.py`：基础拓扑与库接口
-- `slices.json`：切片配置
+- `p4src/fiti_slice.p4`：VLAN 感知 L2 转发 + 逐跳 SRv6 P4 程序
+- `fiti/`：Python 实现包
+  - `fiti/p4.py`：P4 编译、生成树、端口映射、流表下发与运行检查
+  - `fiti/p4_mininet.py`：Mininet 的 `P4Host` / `P4Switch`
+  - `fiti/slice.py`：切片实现、CLI 与库接口
+  - `fiti/traffic.py`：随机通信模式
+  - `fiti/log.py`：控制台摘要与详细日志分离
+  - `fiti/topo.py`：基础拓扑与库接口
+- `fiti_topo.py` / `fiti_slice.py` / `fiti_runtime.py` / `fiti_ctl.py`：
+  CLI 兼容入口
+- `configs/fiti.json`：拓扑数据
+- `configs/slices.json`：切片配置
+- `docs/SLICING_DESIGN.md`：本文档
 - `README.md`：安装、命令和配置字段说明
 
 ## 1. 范围
@@ -39,11 +44,11 @@
 
 ## 2. 架构
 
-- 物理层复用 `fiti.json` 的 41 个节点和 43 条骨干链路
+- 物理层复用 `configs/fiti.json` 的 41 个节点和 43 条骨干链路
 - 每个节点运行一台 bmv2 `simple_switch`，进程名 `s<节点id>`
 - 每个节点的主机接在该交换机的 access 端口上，端口配置为对应切片的 VLAN
 - 交换机之间为 802.1Q trunk，承载所有切片 VLAN
-- 控制面 `fiti_p4.py` 预计算一棵 BFS 生成树，只启用树边
+- 控制面 `fiti/p4.py` 预计算一棵 BFS 生成树，只启用树边
 - 每台交换机为每个 VLAN 创建一个多播组，用于广播/未知单播泛洪
 - 单播表项按 `(VLAN, 目的 MAC)` 静态下发
 - 静态模式：SRv6 只在主机命名空间内封装/解封装，bmv2 不感知 SRH；
@@ -57,7 +62,7 @@
             每台 s<id> 都是 bmv2 simple_switch + fiti_slice.p4
 ```
 
-bmv2 没有 STP。`fiti_p4.py` 以 `--spanning-root`（默认第一个节点，即 `s1`）
+bmv2 没有 STP。`fiti/p4.py` 以 `--spanning-root`（默认第一个节点，即 `s1`）
 为根做 BFS，得到 40 条树边和 3 条非树边。以 `s1` 为根时非树边为：
 
 ```text
@@ -90,7 +95,7 @@ s15 - s4
 
 ## 4. 配置模型
 
-`slices.json` 的核心字段：
+`configs/slices.json` 的核心字段：
 
 - 全局：`topo`、`datapath`、`isolation`、`p4`、`p4runtime`、`control`、`defaults`、`srv6`
 - 切片：`id`、`name`、`vlan`、`subnet`、`hosts`、`paths`
@@ -178,7 +183,7 @@ group(VLAN) = 活动树边 trunk 端口 + 该 VLAN 的本地 access 端口
 
 ## 6. 控制平面
 
-`fiti_p4.py` 在 `net.start()` 之后执行，流程如下。
+`fiti/p4.py` 在 `net.start()` 之后执行，流程如下。
 
 ### 6.1 编译 P4
 
@@ -301,7 +306,7 @@ access 端口上，VLAN 分别为 100 和 104。`nor_bj ping demo_bj` 会 100% �
 
 ## 8. 随机通信模式
 
-`fiti_traffic.py` 提供「不同节点随机互 ping」的流量模式，CLI 入口为
+`fiti/traffic.py` 提供「不同节点随机互 ping」的流量模式，CLI 入口为
 `--random-traffic`。
 
 选择规则：
@@ -402,7 +407,7 @@ P4 编译与 Thrift 命令已在开发机验证：
 
 ```bash
 make p4
-python3 fiti_slice.py --slices slices.json --dump
+python3 fiti_slice.py --slices configs/slices.json --dump
 ```
 
 P4 数据平面用 `simple_switch --use-files` + 手工 pcap 做过转发验证：
@@ -418,7 +423,7 @@ P4 数据平面用 `simple_switch --use-files` + 手工 pcap 做过转发验证�
 完整 41 节点运行需要 root：
 
 ```bash
-sudo python3 fiti_slice.py --slices slices.json --check
+sudo python3 fiti_slice.py --slices configs/slices.json --check
 ```
 
 `--check` 自动检查：
@@ -434,7 +439,7 @@ sudo python3 fiti_slice.py --slices slices.json --check
 运行时模式验收：
 
 ```bash
-sudo python3 fiti_runtime.py --slices slices.json
+sudo python3 fiti_runtime.py --slices configs/slices.json
 python3 fiti_ctl.py list
 python3 fiti_ctl.py add-slice --id demo2 --vlan 105 \
     --subnet 10.6.0.0/24 --hosts bj,sh
@@ -448,14 +453,14 @@ python3 fiti_ctl.py remove-slice --id demo2
 
 ```bash
 # 切片内随机流：全部应为 0% 丢包
-sudo python3 fiti_slice.py --slices slices.json --random-traffic
+sudo python3 fiti_slice.py --slices configs/slices.json --random-traffic
 
 # 允许跨切片：同切片流 0% 丢包，跨切片流 100% 丢包
-sudo python3 fiti_slice.py --slices slices.json \
+sudo python3 fiti_slice.py --slices configs/slices.json \
     --random-traffic --traffic-scope global
 
 # 持续随机发包，Ctrl-C 停止
-sudo python3 fiti_slice.py --slices slices.json \
+sudo python3 fiti_slice.py --slices configs/slices.json \
     --random-traffic --traffic-continuous
 ```
 
@@ -474,7 +479,7 @@ RuntimeCmd: mc_dump
 
 ## 13. P4Runtime 运行时与交换机 SRv6
 
-运行时入口为 `fiti_runtime.py`，节点/链路/生成树固定，只动态增删切片和主机。
+运行时入口为 `fiti/runtime.py`，节点/链路/生成树固定，只动态增删切片和主机。
 
 数据面：
 
@@ -487,9 +492,9 @@ RuntimeCmd: mc_dump
 控制面：
 
 - `fiti_control.SliceController` 维护切片、主机、端口、VLAN、SID、VRF；
-- 初始切片来自 `slices.json`；
+- 初始切片来自 `configs/slices.json`；
 - 运行时新增切片只保存在内存，不写回 JSON；
-- `fiti_runtime.py` 暴露 Unix socket，`fiti_ctl.py` 支持
+- `fiti/runtime.py` 暴露 Unix socket，`fiti/ctl.py` 支持
   `add-slice` / `remove-slice` / `list` / `status`；
 - 表项按交换机 diff 更新，multicast group 用 P4Runtime 更新。
 
@@ -504,7 +509,7 @@ SRv6：
 - `encap` 支持最多 16 段的 segment list；
 - `paths` 中按“第一段 -> 最后一段”配置，控制器反序写入 SRH。
 
-静态模式 `fiti_slice.py` 仍保留 Thrift + 主机侧 SRv6 overlay；运行时模式使用
+静态模式 `fiti/slice.py` 仍保留 Thrift + 主机侧 SRv6 overlay；运行时模式使用
 P4Runtime + 交换机逐跳 SRv6。
 
 ## 14. 后续

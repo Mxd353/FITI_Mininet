@@ -6,7 +6,7 @@ The data plane is ``p4src/fiti_slice.p4``: a VLAN-aware L2 switch with
 per-port access/trunk configuration.  This module:
 
 * compiles the P4 program with ``p4c-bm2-ss``;
-* derives a spanning tree from ``fiti.json`` (bmv2 has no STP);
+* derives a spanning tree from ``configs/fiti.json`` (bmv2 has no STP);
 * maps Mininet interfaces to bmv2 port numbers;
 * installs ``port_cfg`` / ``l2_fwd`` entries and one multicast group per
   VLAN on every switch, using the ``simple_switch`` Thrift runtime.
@@ -24,12 +24,10 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from fiti_log import open_detail_log
-from p4_mininet import P4RuntimeSwitch, P4Switch
+from fiti.log import open_detail_log
+from fiti.paths import DEFAULT_P4_JSON, DEFAULT_P4_SRC
+from fiti.p4_mininet import P4RuntimeSwitch, P4Switch
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_P4_SRC = os.path.join(SCRIPT_DIR, 'p4src', 'fiti_slice.p4')
-DEFAULT_P4_JSON = os.path.join(SCRIPT_DIR, 'build', 'fiti_slice.json')
 DEFAULT_THRIFT_BASE = 9090
 DEFAULT_GRPC_BASE = 50051
 P4C = 'p4c-bm2-ss'

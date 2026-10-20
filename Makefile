@@ -5,6 +5,7 @@ VENV_PYTHON = $(CURDIR)/$(VENV)/bin/python
 P4_SRC    = p4src/fiti_slice.p4
 P4_JSON   = build/fiti_slice.json
 P4INFO    = build/fiti_slice.p4info.txt
+SLICES    = configs/slices.json
 
 .PHONY: all p4 p4-force venv run run-slices runtime runtime-no-cli \
         traffic traffic-base traffic-global \
@@ -44,45 +45,45 @@ run: $(P4_JSON)
 
 # 切片拓扑：5 个切片，47 台主机；其中 6 个节点承载两个切片
 run-slices: $(P4_JSON)
-	sudo python3 fiti_slice.py --slices slices.json
+	sudo python3 fiti_slice.py --slices $(SLICES)
 
 # P4Runtime 运行时：初始切片 + Unix socket 动态增删
 runtime: $(P4_JSON) $(VENV_STAMP)
-	sudo $(VENV_PYTHON) fiti_runtime.py --slices slices.json
+	sudo $(VENV_PYTHON) fiti_runtime.py --slices $(SLICES)
 
 runtime-no-cli: $(P4_JSON) $(VENV_STAMP)
-	sudo $(VENV_PYTHON) fiti_runtime.py --slices slices.json --no-cli
+	sudo $(VENV_PYTHON) fiti_runtime.py --slices $(SLICES) --no-cli
 
 # 随机通信：不同节点随机互 ping
 traffic: $(P4_JSON)
-	sudo python3 fiti_slice.py --slices slices.json --random-traffic
+	sudo python3 fiti_slice.py --slices $(SLICES) --random-traffic
 
 traffic-base: $(P4_JSON)
 	sudo python3 fiti_topo.py --random-traffic
 
 # 跨切片随机通信：同切片期望可达，跨切片期望隔离
 traffic-global: $(P4_JSON)
-	sudo python3 fiti_slice.py --slices slices.json --random-traffic --traffic-scope global
+	sudo python3 fiti_slice.py --slices $(SLICES) --random-traffic --traffic-scope global
 
 # 持续随机发包，Ctrl-C 停止
 traffic-continuous: $(P4_JSON)
-	sudo python3 fiti_slice.py --slices slices.json --random-traffic --traffic-continuous
+	sudo python3 fiti_slice.py --slices $(SLICES) --random-traffic --traffic-continuous
 
 traffic-base-continuous: $(P4_JSON)
 	sudo python3 fiti_topo.py --random-traffic --traffic-continuous
 
 traffic-global-continuous: $(P4_JSON)
-	sudo python3 fiti_slice.py --slices slices.json --random-traffic --traffic-continuous --traffic-scope global
+	sudo python3 fiti_slice.py --slices $(SLICES) --random-traffic --traffic-continuous --traffic-scope global
 
 check: $(P4_JSON)
-	sudo python3 fiti_slice.py --slices slices.json --check
+	sudo python3 fiti_slice.py --slices $(SLICES) --check
 
 check-srv6: $(P4_JSON)
-	sudo python3 fiti_slice.py --slices slices.json --check-srv6
+	sudo python3 fiti_slice.py --slices $(SLICES) --check-srv6
 
 dump:
 	python3 fiti_topo.py --dump
-	python3 fiti_slice.py --slices slices.json --dump
+	python3 fiti_slice.py --slices $(SLICES) --dump
 
 clean:
 	rm -rf build pcap

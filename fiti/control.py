@@ -8,7 +8,7 @@ The switch/topology set is fixed.  A slice add/remove only changes:
 * VLAN/L2/multicast entries;
 * SRv6 SID/encap/VRF entries.
 
-Initial slices come from ``slices.json``.  Runtime additions are kept in
+Initial slices come from ``configs/slices.json``.  Runtime additions are kept in
 memory only and are not written back to the JSON file.
 """
 
@@ -20,13 +20,13 @@ from collections import OrderedDict
 
 from mininet.log import warning
 
-from fiti_p4 import (build_port_maps, build_rule_plan, compute_spanning_tree,
+from fiti.p4 import (build_port_maps, build_rule_plan, compute_spanning_tree,
                      next_hop_on_tree, switch_name)
-from fiti_slice import _host_ip_in_subnet
-from p4_mininet import P4Host
+from fiti.slice import _host_ip_in_subnet
+from fiti.p4_mininet import P4Host
 
 try:
-    from fiti_p4runtime import P4InfoHelper
+    from fiti.p4runtime import P4InfoHelper
 except RuntimeError:
     P4InfoHelper = None
 

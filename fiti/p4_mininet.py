@@ -22,12 +22,10 @@ import time
 from mininet.log import info, warning
 from mininet.node import Host, Switch
 
+from fiti.paths import DEFAULT_LOG_DIR
+
 #: seconds to wait for the Thrift runtime to come up
 SWITCH_START_TIMEOUT = 30
-
-#: default directory for per-switch bmv2 logs
-DEFAULT_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               'build', 'logs')
 
 
 class P4Host(Host):
