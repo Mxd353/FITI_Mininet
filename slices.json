@@ -3,6 +3,13 @@
   "topo": "fiti.json",
   "datapath": "bmv2",
   "isolation": "vlan",
+  "p4runtime": {
+    "thrift_base": null,
+    "grpc_base": null
+  },
+  "control": {
+    "socket": "/tmp/fiti.sock"
+  },
   "p4": {
     "json": "build/fiti_slice.json",
     "thrift_base": null,
@@ -18,6 +25,8 @@
   },
   "srv6": {
     "enabled": false,
+    "mode": "switch",
+    "path_mode": "shortest",
     "underlay_prefix": "2001:db8",
     "overlay_prefix": "fd00",
     "decap_table": 100,
@@ -30,9 +39,20 @@
       "vlan": 100,
       "subnet": "10.1.0.0/24",
       "hosts": [
-        "bj", "zhz", "tjn", "sjz", "tyn", "hht",
-        "sy", "chc", "hrb", "dln",
-        "zgc", "pku", "bupt", "buaa"
+        "bj",
+        "zhz",
+        "tjn",
+        "sjz",
+        "tyn",
+        "hht",
+        "sy",
+        "chc",
+        "hrb",
+        "dln",
+        "zgc",
+        "pku",
+        "bupt",
+        "buaa"
       ]
     },
     {
@@ -41,8 +61,17 @@
       "vlan": 101,
       "subnet": "10.2.0.0/24",
       "hosts": [
-        "sh", "nj", "hzh", "hef", "jnn", "qda",
-        "fzh", "xmn", "nch", "fudan", "tongji"
+        "sh",
+        "nj",
+        "hzh",
+        "hef",
+        "jnn",
+        "qda",
+        "fzh",
+        "xmn",
+        "nch",
+        "fudan",
+        "tongji"
       ]
     },
     {
@@ -51,7 +80,12 @@
       "vlan": 102,
       "subnet": "10.3.0.0/24",
       "hosts": [
-        "gz", "szh", "nan", "hak", "chs", "wh"
+        "gz",
+        "szh",
+        "nan",
+        "hak",
+        "chs",
+        "wh"
       ]
     },
     {
@@ -60,8 +94,16 @@
       "vlan": 103,
       "subnet": "10.4.0.0/24",
       "hosts": [
-        "xa", "cd", "chq", "lzh", "gyn",
-        "kmn", "lsa", "xnn", "ych", "wlq"
+        "xa",
+        "cd",
+        "chq",
+        "lzh",
+        "gyn",
+        "kmn",
+        "lsa",
+        "xnn",
+        "ych",
+        "wlq"
       ]
     },
     {
@@ -70,7 +112,19 @@
       "vlan": 104,
       "subnet": "10.5.0.0/24",
       "hosts": [
-        "bj", "sh", "xa", "gz", "wh", "cd"
+        "bj",
+        "sh",
+        "xa",
+        "gz",
+        "wh",
+        "cd"
+      ],
+      "paths": [
+        {
+          "src": "bj",
+          "dst": "xa",
+          "segments": ["wh", "cd", "xa"]
+        }
       ]
     }
   ]

@@ -46,7 +46,8 @@
 - 控制面 `fiti_p4.py` 预计算一棵 BFS 生成树，只启用树边
 - 每台交换机为每个 VLAN 创建一个多播组，用于广播/未知单播泛洪
 - 单播表项按 `(VLAN, 目的 MAC)` 静态下发
-- SRv6 只在主机命名空间内封装/解封装，bmv2 不感知 SRH
+- 静态模式：SRv6 只在主机命名空间内封装/解封装，bmv2 不感知 SRH；
+  运行时模式：SRv6 由 P4 在交换机上逐跳实现（见第 13 节）
 
 ```text
  nor_bj ─┐  access VLAN 100          trunk (VLAN 100..104)          ┌─ eas_sh
@@ -79,9 +80,11 @@ s15 - s4
 | VLAN          | 1–4094，切片间唯一，默认从 100 起                |
 | bmv2 端口     | 由 Mininet 分配，控制面从 `intf.link` 反查端口号 |
 | Thrift 端口   | `base + 节点id`，默认 base=9090，自动避让占用    |
-| SRv6 underlay | `2001:db8:<切片序号>::<节点id>/64`               |
-| SRv6 SID      | `2001:db8:<切片序号>:<节点id>::1/128`            |
-| SRv6 overlay  | `fd00:<切片序号>::<节点id>/128`                  |
+| 静态 SRv6 underlay | `2001:db8:<切片序号>::<节点id>/64`          |
+| 静态 SRv6 SID | `2001:db8:<切片序号>:<节点id>::1/128`            |
+| 静态 SRv6 overlay | `fd00:<切片序号>::<节点id>/128`              |
+| 运行时主机 IPv6 | `fd00:<vlan>::<节点id>/64`                    |
+| 运行时节点 SID | `fc00:<节点id>:<vlan>::1/128`                  |
 
 主机名同时受 Linux 接口名 15 字符限制（主机侧接口为 `<host>-eth0`），配置校验会检查。
 
@@ -89,9 +92,12 @@ s15 - s4
 
 `slices.json` 的核心字段：
 
-- 全局：`topo`、`datapath`（固定 `bmv2`）、`isolation`（固定 `vlan`）、`p4`、`defaults`、`srv6`
-- 切片：`id`、`name`、`vlan`、`subnet`、`hosts`
+- 全局：`topo`、`datapath`、`isolation`、`p4`、`p4runtime`、`control`、`defaults`、`srv6`
+- 切片：`id`、`name`、`vlan`、`subnet`、`hosts`、`paths`
 - `p4`：`json`、`thrift_base`、`log_level`、`log_dir`、`pcap`、`pcap_dir`、`spanning_root`
+- `p4runtime`：`thrift_base`、`grpc_base`
+- `control`：`socket`
+- `srv6`：`enabled`、`mode`、`path_mode`
 
 校验规则：
 
@@ -334,7 +340,7 @@ ping -c <duration/interval> -i <interval> -W 1 -s <size> <dst_ip>
 VLAN 接入、`l2_fwd` 单播路径、生成树泛洪和跨切片端到端不可达。
 它基于 `ping`，目标是连通性/丢包，不做吞吐压测。
 
-## 9. SRv6 主机 overlay
+## 9. SRv6 主机 overlay（静态模式）
 
 仅在 `srv6.enabled=true` 或 `--srv6` 时启用。
 
@@ -387,7 +393,7 @@ VLAN 接入、`l2_fwd` 单播路径、生成树泛洪和跨切片端到端不可
 - 泛洪在整棵生成树上扩散，没有按 VLAN 剪枝
 - 所有切片共享物理链路带宽，没有每切片带宽保障
 - 切片只隔离网络命名空间，CPU / 内存默认不隔离
-- bmv2 只做 L2；SRv6 只在主机侧生效，不能验证 P4/Tofino 的逐跳 SRv6
+- 静态模式下 bmv2 只做 L2；运行时模式已实现交换机逐跳 SRv6
 - 不再支持 OVS standalone + STP、`ovs-testcontroller`、外部 OpenFlow 控制器
 
 ## 12. 验证方法
@@ -425,6 +431,19 @@ sudo python3 fiti_slice.py --slices slices.json --check
 | 同节点多切片           | `nor_bj` / `demo_bj` 等共享节点的切片仍然互相隔离  |
 | SRv6（`--check-srv6`） | 切片内 overlay 地址 0% 丢包                        |
 
+运行时模式验收：
+
+```bash
+sudo python3 fiti_runtime.py --slices slices.json
+python3 fiti_ctl.py list
+python3 fiti_ctl.py add-slice --id demo2 --vlan 105 \
+    --subnet 10.6.0.0/24 --hosts bj,sh
+python3 fiti_ctl.py remove-slice --id demo2
+```
+
+检查运行时新增切片内 IPv6 ping6 0% 丢包、跨切片 100% 丢包，并确认删除后
+表项/multicast group 已清理。
+
 随机通信验收：
 
 ```bash
@@ -453,7 +472,42 @@ RuntimeCmd: table_dump EgressImpl.egress_port
 RuntimeCmd: mc_dump
 ```
 
-## 13. 后续
+## 13. P4Runtime 运行时与交换机 SRv6
+
+运行时入口为 `fiti_runtime.py`，节点/链路/生成树固定，只动态增删切片和主机。
+
+数据面：
+
+- `simple_switch_grpc` 启动时使用 `--no-p4`；
+- 控制器通过 P4Runtime `SetForwardingPipelineConfig` 下发 P4 信息；
+- 表项、multicast group 通过 P4Runtime `WriteRequest` 下发；
+- access 端口热插拔通过 Thrift 的 `port_add` / `port_remove`；
+- 主机 namespace/veth 由 Mininet 在已有节点上动态创建。
+
+控制面：
+
+- `fiti_control.SliceController` 维护切片、主机、端口、VLAN、SID、VRF；
+- 初始切片来自 `slices.json`；
+- 运行时新增切片只保存在内存，不写回 JSON；
+- `fiti_runtime.py` 暴露 Unix socket，`fiti_ctl.py` 支持
+  `add-slice` / `remove-slice` / `list` / `status`；
+- 表项按交换机 diff 更新，multicast group 用 P4Runtime 更新。
+
+SRv6：
+
+- 主机 IPv6 为 `fd00:<vlan>::<node_id>/64`；
+- 节点 SID 为 `fc00:<node_id>:<vlan>::1/128`；
+- `local_sid` 执行 End/End.X，`sid_fib` 转发到 SID 所属节点；
+- `local_sid` / `sid_fib` 的表项 key 为 `(slice_id, SID)`，即使主机伪造
+  其他 VLAN 的 SID，也会因 slice 不匹配而 drop；
+- `vrf_fib` 执行 End.DT6，交给本节点切片主机；
+- `encap` 支持最多 16 段的 segment list；
+- `paths` 中按“第一段 -> 最后一段”配置，控制器反序写入 SRH。
+
+静态模式 `fiti_slice.py` 仍保留 Thrift + 主机侧 SRv6 overlay；运行时模式使用
+P4Runtime + 交换机逐跳 SRv6。
+
+## 14. 后续
 
 若后续确有需求，可作为独立项目评估：
 
@@ -462,4 +516,4 @@ RuntimeCmd: mc_dump
 - 按 VLAN 剪枝泛洪（为每个切片计算独立的转发树）
 - 基于 P4 的每切片计量/限速
 - 动态增删切片
-- 逐跳 SRv6（End/End.X/End.DX6）与 P4Runtime 控制面
+- 多段 SRv6 路径策略与 TE 优化

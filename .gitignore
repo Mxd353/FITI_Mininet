@@ -1,6 +1,6 @@
 __pycache__/
 *.py[cod]
-.venv/
+.venv-p4runtime/
 *.log
 build/
 pcap/

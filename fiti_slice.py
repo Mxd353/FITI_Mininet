@@ -121,6 +121,7 @@ class Slice:
     subnet: str
     hosts: List[str]
     index: int = 1
+    paths: List[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -281,12 +282,19 @@ def _parse_slice(raw, index, defaults, data, used_ids, used_vlans,
     if raw.get('bw_share') is not None:
         _error('切片 %s 的 bw_share 已不支持；切片共享物理链路带宽' % sid)
 
+    paths = raw.get('paths', [])
+    if paths is None:
+        paths = []
+    if not isinstance(paths, list):
+        _error('切片 %s 的 paths 必须是列表' % sid)
+
     return Slice(id=sid,
                  name=str(raw.get('name', sid)),
                  vlan=vlan,
                  subnet=str(subnet),
                  hosts=hosts,
-                 index=index)
+                 index=index,
+                 paths=paths)
 
 
 def parse_slice_config(raw, path):

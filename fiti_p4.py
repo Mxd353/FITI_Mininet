@@ -25,12 +25,13 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 from fiti_log import open_detail_log
-from p4_mininet import P4Switch
+from p4_mininet import P4RuntimeSwitch, P4Switch
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_P4_SRC = os.path.join(SCRIPT_DIR, 'p4src', 'fiti_slice.p4')
 DEFAULT_P4_JSON = os.path.join(SCRIPT_DIR, 'build', 'fiti_slice.json')
 DEFAULT_THRIFT_BASE = 9090
+DEFAULT_GRPC_BASE = 50051
 P4C = 'p4c-bm2-ss'
 # bmv2 的 --log-level 取值（注意是 warn，不是 warning）
 P4_LOG_LEVELS = ('trace', 'debug', 'info', 'warn', 'error', 'off')
@@ -52,15 +53,20 @@ def _switch_id(name):
 # P4 compilation and runtime name resolution
 # --------------------------------------------------------------------------
 
-def compile_p4(src=None, out=None, force=False):
-    """Compile the P4 program to bmv2 JSON if missing or out of date."""
+def compile_p4(src=None, out=None, force=False, p4info_out=None):
+    """Compile the P4 program to bmv2 JSON (and optionally p4info)."""
     src = os.path.abspath(src or DEFAULT_P4_SRC)
     out = os.path.abspath(out or DEFAULT_P4_JSON)
+    p4info_out = (os.path.abspath(p4info_out)
+                  if p4info_out else os.path.splitext(out)[0] + '.p4info.txt')
     if (not force and os.path.exists(out)
-            and os.path.getmtime(out) >= os.path.getmtime(src)):
+            and os.path.exists(p4info_out)
+            and os.path.getmtime(out) >= os.path.getmtime(src)
+            and os.path.getmtime(p4info_out) >= os.path.getmtime(src)):
         return out
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    cmd = [P4C, '--arch', 'v1model', '-o', out, src]
+    cmd = [P4C, '--arch', 'v1model',
+           '--p4runtime-files', p4info_out, '-o', out, src]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
     except FileNotFoundError:
@@ -591,3 +597,46 @@ def make_switch_factory(json_path, thrift_base, p4_log_level='info',
     return partial(FitiP4Switch, json_path=json_path,
                    thrift_base=thrift_base, p4_log_level=p4_log_level,
                    pcap_dump=pcap_dump, log_dir=log_dir, sw_path=sw_path)
+
+
+class FitiP4RuntimeSwitch(P4RuntimeSwitch):
+    """simple_switch_grpc with per-node Thrift/gRPC ports."""
+
+    def __init__(self, name, thrift_base=DEFAULT_THRIFT_BASE,
+                 grpc_base=DEFAULT_GRPC_BASE, json_path=None,
+                 p4_log_level='info', pcap_dump=None, log_dir=None,
+                 sw_path=None, **kwargs):
+        node_id = _switch_id(name) if name.startswith('s') else 0
+        super(FitiP4RuntimeSwitch, self).__init__(
+            name,
+            sw_path=sw_path or (shutil.which('simple_switch_grpc')
+                                or 'simple_switch_grpc'),
+            json_path=json_path,
+            thrift_port=thrift_base + node_id,
+            grpc_port=grpc_base + node_id,
+            device_id=node_id,
+            log_level=p4_log_level,
+            pcap_dump=pcap_dump,
+            log_dir=log_dir,
+            **kwargs)
+
+
+def choose_port_base(data, preferred, step=1000, tries=20, label=''):
+    ids = [int(node['id']) for node in data['nodes']]
+    for attempt in range(tries):
+        base = preferred + attempt * step
+        if all(_port_free(base + node_id) for node_id in ids):
+            return base
+    raise RuntimeError('从 %d 开始找不到可用的%s端口 (需要 %d 个)'
+                       % (preferred, label, len(ids)))
+
+
+def make_runtime_switch_factory(json_path, thrift_base, grpc_base,
+                                p4_log_level='info', pcap_dump=None,
+                                log_dir=None, sw_path=None):
+    """Return a callable for P4Runtime Mininet switches."""
+    from functools import partial
+    return partial(FitiP4RuntimeSwitch, json_path=json_path,
+                   thrift_base=thrift_base, grpc_base=grpc_base,
+                   p4_log_level=p4_log_level, pcap_dump=pcap_dump,
+                   log_dir=log_dir, sw_path=sw_path)

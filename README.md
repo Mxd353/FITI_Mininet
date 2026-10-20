@@ -1,8 +1,9 @@
 # FITI Mininet + bmv2 拓扑
 
 用 Mininet 模拟 `fiti.json` 中的 FITI 骨干拓扑。每个节点运行一台 bmv2
-`simple_switch`，加载 `p4src/fiti_slice.p4` 做 VLAN 感知的二层转发；
-同一台交换机可以同时承载多个切片的主机。
+`simple_switch` / `simple_switch_grpc`，加载 `p4src/fiti_slice.p4` 做
+VLAN 感知 L2 转发和交换机逐跳 SRv6；同一台交换机可以承载多个切片主机，
+切片支持运行中增删。
 
 ## 拓扑概况
 
@@ -12,19 +13,24 @@
 | 骨干链路 | 43 条                                                             |
 | 主机地址 | 基础模式 `10.0.0.<id>/24`；切片模式 `10.<切片序号>.0.<节点id>/24` |
 | 链路权重 | `weight` 4/2/1 映射为 100/50/10 Mbps                              |
-| 数据平面 | bmv2 `simple_switch`，P4-16 / v1model                             |
-| 控制平面 | `fiti_p4.py`：生成树 + Thrift 静态流表，不需要外部控制器          |
+| 数据平面 | bmv2，P4-16 / v1model，L2 + SRv6                                  |
+| 控制平面 | 静态模式 Thrift；运行时模式 P4Runtime + Unix socket                |
 
 文件：
 
 - `fiti.json`：拓扑数据
 - `fiti_topo.py`：基础拓扑、CLI 与库接口
 - `fiti_slice.py`：网络切片 CLI 与库接口
-- `fiti_p4.py`：P4 编译、生成树、端口映射、流表下发
+- `fiti_p4.py`：P4 编译、生成树、端口映射、静态 Thrift 流表
+- `fiti_p4runtime.py`：P4Runtime 客户端
+- `fiti_control.py`：运行时切片控制器（增删切片、SID/VRF 分配）
+- `fiti_runtime.py`：P4Runtime + 动态切片运行时入口
+- `fiti_ctl.py`：Unix socket 控制客户端
 - `fiti_traffic.py`：随机通信模式
 - `fiti_log.py`：控制台输出与日志文件
-- `p4_mininet.py`：Mininet 的 `P4Host` / `P4Switch`
-- `p4src/fiti_slice.p4`：VLAN 感知 L2 转发 P4 程序
+- `p4_mininet.py`：Mininet 的 `P4Host` / `P4Switch` / `P4RuntimeSwitch`
+- `p4src/fiti_slice.p4`：VLAN L2 + 多段 SRv6 P4 程序
+- `requirements-p4runtime.txt`：P4Runtime Python 依赖
 - `slices.json`：切片配置示例
 - `SLICING_DESIGN.md`：切片与 P4 数据平面设计
 - `Makefile`：编译、运行、检查、清理
@@ -35,9 +41,26 @@
 - Linux
 - Mininet 2.3+
 - p4c（`p4c-bm2-ss`）
-- bmv2（`simple_switch`、`simple_switch_CLI`）
+- bmv2（`simple_switch`、`simple_switch_grpc`、`simple_switch_CLI`）
 - Python 3.8+
+- P4Runtime Python 依赖（建议 venv）
 - root 权限（`sudo`）
+
+P4Runtime 依赖建议装在保留系统 site-packages 的 venv 中，这样仍能 import
+Mininet：
+
+```bash
+make venv
+# 等价于：
+python3 -m venv --system-site-packages .venv-p4runtime
+PYTHONNOUSERSITE=1 .venv-p4runtime/bin/pip install -r requirements-p4runtime.txt
+```
+
+`PYTHONNOUSERSITE=1` 避免 pip 把 `~/.local` 中的 protobuf 当成已安装；
+否则 `sudo` 运行 venv 时看不到用户 site-packages，会误报 P4Runtime 依赖缺失。
+
+系统 Python 若提示 `externally-managed-environment`，不要直接使用
+`pip install --break-system-packages`，优先使用上面的 venv。
 
 异常退出后清理残留：
 
@@ -60,11 +83,19 @@ sudo python3 fiti_topo.py
 sudo python3 fiti_topo.py --pingall
 sudo python3 fiti_topo.py --random-traffic
 
-# 切片拓扑（5 个切片 / 47 台主机）
+# 切片拓扑（静态 Thrift 模式）
 sudo python3 fiti_slice.py --slices slices.json
 sudo python3 fiti_slice.py --slices slices.json --random-traffic
 sudo python3 fiti_slice.py --slices slices.json --check
-sudo python3 fiti_slice.py --slices slices.json --check-srv6
+
+# P4Runtime 运行时：初始切片来自 slices.json，支持运行中增删
+sudo .venv-p4runtime/bin/python fiti_runtime.py --slices slices.json
+
+# 另一个终端：查询 / 增删切片
+python3 fiti_ctl.py list
+python3 fiti_ctl.py add-slice --id demo2 --vlan 105 \
+    --subnet 10.6.0.0/24 --hosts bj,sh
+python3 fiti_ctl.py remove-slice --id demo2
 ```
 
 `fiti_topo.py` 检测到 `--slices` 时会转交 `fiti_slice.py`：
@@ -122,6 +153,8 @@ FITI 拓扑中 3 条非树边在数据平面被丢弃。
 - `l2_fwd`：按 `(VLAN, 目的 MAC)` 转发；未命中时在 VLAN 内泛洪。
 - `egress_port`：access 端口剥 tag，trunk 端口保留 tag。
 - 每台交换机、每个 VLAN 一个多播组，用于广播和未知单播。
+- SRv6：`encap` 做 H.Encaps，`sid_fib` 转发 SID，`local_sid` 执行
+  End/End.X，`vrf_fib` 做 End.DT6。
 
 完整流水线和表结构见 [SLICING_DESIGN.md](SLICING_DESIGN.md)。
 
@@ -175,11 +208,15 @@ with fiti_network() as net:          # 自动清理
 | `p4.spanning_root`         | 生成树根节点；`null` 使用第一个节点                      |
 | `defaults.vlan_base`       | 未指定 VLAN 时的起始值                                   |
 | `defaults.subnet_base`     | 未指定子网时的起始值                                     |
-| `srv6.enabled`             | 是否默认开启 SRv6 overlay                                |
-| `srv6.decap_table`         | 解封装路由表，默认 100                                   |
+| `srv6.enabled`             | 静态模式是否默认开启主机 overlay                         |
+| `srv6.mode` / `path_mode`  | `switch`；`shortest` / 显式 `paths`                      |
+| `srv6.decap_table`         | 静态主机 overlay 解封装路由表，默认 100                  |
+| `p4runtime`                | `thrift_base` / `grpc_base`                              |
+| `control.socket`           | 运行时 Unix socket 路径                                  |
 | `slices[].id`              | 切片标识，也是主机名前缀                                 |
 | `slices[].vlan` / `subnet` | 可选，需全局唯一                                         |
 | `slices[].hosts`           | 节点 `abbr` 列表或 `"all"`；同一节点可出现在多个切片     |
+| `slices[].paths`           | 可选多段路径，`src`/`dst`/`segments`                     |
 
 校验会检查 VLAN / 子网冲突、未知节点、主机名过长，以及不支持的字段。
 
@@ -214,6 +251,94 @@ net.stop()
 
 常用接口：`build_slice_net`、`ping_slice`、`hosts`、`host`、`p4_port_errors`、
 `enable_srv6`、`check_srv6_slice`、`stats`。
+
+## P4Runtime 运行时与动态切片
+
+`fiti_runtime.py` 启动固定 41 节点拓扑，每节点运行 `simple_switch_grpc`，
+通过 P4Runtime 下发 pipeline、表项和 multicast group；主机 access 端口动态
+创建，端口热插拔走 Thrift 的 `port_add` / `port_remove`。
+
+```bash
+sudo .venv-p4runtime/bin/python fiti_runtime.py --slices slices.json
+# 或后台模式
+sudo .venv-p4runtime/bin/python fiti_runtime.py --slices slices.json --no-cli
+```
+
+启动后：
+
+- `slices.json` 中的切片作为初始切片创建；
+- 运行时新增切片只保存在内存，不写回 `slices.json`；
+- 控制接口默认是 `/tmp/fiti.sock`；
+- 切片主机名统一为 `<slice_id>_<abbr>`。
+
+常用 Makefile 目标：
+
+```bash
+make runtime
+make runtime-no-cli
+```
+
+### 控制接口
+
+```bash
+python3 fiti_ctl.py list
+python3 fiti_ctl.py status
+
+python3 fiti_ctl.py add-slice --id demo2 --vlan 105 \
+    --subnet 10.6.0.0/24 --hosts bj,sh
+
+python3 fiti_ctl.py remove-slice --id demo2
+```
+
+也可以直接发 JSON：
+
+```json
+{"cmd":"add_slice","slice":{"id":"demo2","vlan":105,
+  "subnet":"10.6.0.0/24","hosts":["bj","sh"]}}
+```
+
+支持 `add_slice`、`remove_slice`、`list_slices`、`status`。
+`--vlan`/`--subnet` 省略时自动分配。
+
+### 交换机 SRv6
+
+`p4src/fiti_slice.p4` 支持：
+
+- Ethernet/VLAN/IPv6/SRH 解析；
+- H.Encaps：外层 IPv6 + SRH + 内层 IPv6；
+- `sid_fib`：中间节点按 `(slice_id, SID)` 转发；
+- `local_sid`：按 `(slice_id, SID)` 执行 End / End.X；
+- `vrf_fib`：End.DT6，解封装后交给本地主机；
+- `local_sid` / `sid_fib` 都按切片隔离，不能用一个 VLAN 的 SRH
+  访问另一个 VLAN 的主机；
+- 16 段 segment list。
+
+控制面分配：
+
+```text
+主机 IPv6:  fd00:<vlan>::<node_id>/64
+节点 SID:   fc00:<node_id>:<vlan>::1/128
+```
+
+切片内 IPv6 流量会封装成 SRv6；跨切片仍由 VLAN/VRF 隔离。
+
+### 多段路径
+
+`paths` 可选，节点顺序为“第一段 -> 最后一段”，控制面会按 SRH 规则逆序写入：
+
+```json
+{
+  "id": "demo",
+  "vlan": 104,
+  "hosts": ["bj", "sh", "xa", "gz", "wh", "cd"],
+  "paths": [
+    {"src": "bj", "dst": "xa", "segments": ["wh", "cd", "xa"]}
+  ]
+}
+```
+
+路径节点必须是该切片中的节点；最多 16 段。未配置的源/目的对使用最短路径
+（单段目的 SID）。
 
 ## 随机通信模式
 
@@ -283,5 +408,8 @@ sudo python3 fiti_slice.py --slices slices.json --pcap --pcap-dir pcap
 - 单播表项静态下发，不做 MAC 学习。
 - 泛洪在整棵生成树上扩散，没有按 VLAN 剪枝。
 - 所有切片共享物理链路带宽。
-- 每台交换机是一个独立的 `simple_switch` 进程，41 节点占用较多内存和 CPU。
-- bmv2 只做 L2；SRv6 只在主机侧生效。
+- 每台交换机是一个独立的 bmv2 进程，41 节点占用较多内存和 CPU。
+- P4Runtime 运行时需要 `grpcio` / `p4runtime`，并且要保留 Thrift 做端口热插拔。
+- 运行时新增切片不持久化，重启后只恢复 `slices.json` 中的初始切片。
+- SRv6 封装增加约 40 + 8 + 16N 字节，主机 MTU 需要相应调小。
+- SRv6 无动态路由/NDP 控制协议，SID 下一跳和邻居信息由控制面静态计算。
