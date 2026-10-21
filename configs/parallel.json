@@ -1,0 +1,44 @@
+{
+    "version": 1,
+    "sites": [
+        {
+            "id": 1,
+            "abbr": "bj",
+            "name": "北京"
+        },
+        {
+            "id": 2,
+            "abbr": "sh",
+            "name": "上海"
+        }
+    ],
+    "networks": [
+        {
+            "id": 1,
+            "vpn": "l3"
+        },
+        {
+            "id": 2,
+            "vpn": "l3"
+        },
+        {
+            "id": 3,
+            "vpn": "l2"
+        },
+        {
+            "id": 4,
+            "vpn": "l2"
+        }
+    ],
+    "p4": {
+        "json": "build/parallel_vpn.json",
+        "thrift_base": 11000,
+        "log_level": "info"
+    },
+    "underlay": {
+        "site_prefix": "fd00:0",
+        "public_prefix": "2001:255:0:100::/64",
+        "public_c2": "2001:255:0:100::a806/64",
+        "public_peer": "2001:255:0:100::2000"
+    }
+}

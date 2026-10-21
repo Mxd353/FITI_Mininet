@@ -6,11 +6,14 @@ P4_SRC    = p4src/fiti_slice.p4
 P4_JSON   = build/fiti_slice.json
 P4INFO    = build/fiti_slice.p4info.txt
 SLICES    = configs/slices.json
+PARALLEL_P4_JSON = build/parallel_vpn.json
+PARALLEL_P4INFO  = build/parallel_vpn.p4info.txt
 
 .PHONY: all p4 p4-force venv run run-slices runtime runtime-no-cli \
         traffic traffic-base traffic-global \
         traffic-continuous traffic-base-continuous traffic-global-continuous \
-        check check-srv6 dump clean
+        check check-srv6 dump clean parallel-p4 parallel-dump parallel-run \
+        parallel-run-no-cli
 
 all: p4
 
@@ -89,3 +92,20 @@ clean:
 	rm -rf build pcap
 	-sudo pkill -f simple_switch
 	-sudo mn -c
+
+# ---------------------------------------------------------------------------
+# 并行网络仿真（北京/上海，C-E/A-S1/S2）
+# ---------------------------------------------------------------------------
+parallel-p4:
+	@mkdir -p build
+	$(P4C) --arch v1model --p4runtime-files $(PARALLEL_P4INFO) \
+		-o $(PARALLEL_P4_JSON) p4src/parallel_vpn.p4
+
+parallel-dump:
+	python3 parallel_net.py --dump
+
+parallel-run: parallel-p4
+	sudo python3 parallel_net.py
+
+parallel-run-no-cli: parallel-p4
+	sudo python3 parallel_net.py --no-cli

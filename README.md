@@ -60,13 +60,23 @@ fiti/                       Python 实现包
 
 configs/
 ├── fiti.json               拓扑数据
-└── slices.json             切片配置示例
+├── slices.json             切片配置示例
+└── parallel.json           并行网络配置
 
 docs/
 ├── SLICING_DESIGN.md       切片与 P4 数据平面设计
 ├── PARALLEL_NETWORK_DESIGN.md  中关村并行网络仿真设计
 └── fiti_topology.svg       平面拓扑图
 
+parallel/                   并行网络仿真子项目
+├── config.py               网络 ID、VLAN、IPv6 规划
+├── topology.py             C/E/A/S1/S2/云服务器拓扑
+├── switch.py               BMv2 交换机封装
+├── control.py              静态 L3VPN 表项下发
+└── runtime.py              Mininet 构建与启动
+
+parallel_net.py             并行网络 CLI
+p4src/parallel_vpn.p4       VLAN + L2 + L3VPN 数据平面
 p4src/fiti_slice.p4         VLAN L2 + 多段 SRv6 P4 程序
 fiti_topo.py                基础拓扑 CLI 兼容入口
 fiti_slice.py               切片 CLI 兼容入口
@@ -75,6 +85,33 @@ fiti_ctl.py                 Unix socket 控制入口
 Makefile                    编译、运行、检查、清理
 requirements-p4runtime.txt  P4Runtime Python 依赖
 ```
+
+## 并行网络仿真
+
+中关村主干网并行网络场景是独立子项目，默认只启动北京/上海两个站点。
+详细设计见 [docs/PARALLEL_NETWORK_DESIGN.md](docs/PARALLEL_NETWORK_DESIGN.md)。
+
+```bash
+# 免 root 查看拓扑和地址规划
+make parallel-dump
+
+# 编译并行网络 P4
+make parallel-p4
+
+# 启动 Mininet/BMv2（需要 root）
+make parallel-run
+
+# 后台模式，不进入 CLI
+make parallel-run-no-cli
+```
+
+当前阶段：
+
+- `E`/`S1`/`S2` 使用 BMv2 + P4；
+- `C`/`A`/云服务器/公网边界使用 Linux netns；
+- 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN；
+- L3VPN 使用静态表项验证；L2VPN、公网接入、EVPN/SRv6 控制面后续实现；
+- S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN。
 
 ## 环境要求
 

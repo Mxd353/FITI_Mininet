@@ -4,6 +4,12 @@
 主机上运行的仿真方案。目标是验证并行网络的 VLAN 接入、L3VPN/L2VPN 隔离、
 跨站点转发和公网接入，而不是复现硬件路由器的转发性能或完整 EVPN 控制面。
 
+当前执行状态：
+
+- 已完成北京/上海拓扑、`parallel/` 子项目、BMv2 P4 程序、静态 L3VPN 表项；
+- 网络 1/2 为 L3VPN 静态验证；
+- 网络 3/4 的 L2VPN 隧道、公网接入、EVPN/SRv6 控制面尚未实现。
+
 ## 1. PDF 要点
 
 ### 1.1 网络资源
@@ -138,13 +144,13 @@ Python 控制面           负责生成并下发静态 P4 表项
 
 | 逻辑设备 | 仿真实现 | 说明 |
 | --- | --- | --- |
-| E-bj / E-sh | BMv2 + P4 | 试验路由器，承载 VRF、L3VPN、L2VPN/SRv6 数据平面 |
-| S1-bj / S1-sh | BMv2 + P4 | 站点接入交换机，放行并行网络 VLAN |
-| S2-bj / S2-sh | BMv2 + P4 | 站点接入交换机，上行拒绝并行网络 VLAN |
-| C-bj / C-sh | Linux netns | 传统核心路由器，IPv6 转发/静态路由 |
-| A-bj / A-sh | Linux netns | 传统汇聚路由器 |
+| E_bj / E_sh | BMv2 + P4 | 试验路由器，承载 VRF、L3VPN、L2VPN/SRv6 数据平面 |
+| S1_bj / S1_sh | BMv2 + P4 | 站点接入交换机，放行并行网络 VLAN |
+| S2_bj / S2_sh | BMv2 + P4 | 站点接入交换机，上行拒绝并行网络 VLAN |
+| C_bj / C_sh | Linux netns | 传统核心路由器，IPv6 转发/静态路由 |
+| A_bj / A_sh | Linux netns | 传统汇聚路由器 |
 | cloud-* | Linux netns | 云计算服务器 |
-| public-border / FIX | Linux netns | 公网边界，BGP/静态路由、前缀过滤 |
+| pub_border / fix | Linux netns | 公网边界，BGP/静态路由、前缀过滤；`pub_border` 是短名，避免接口名超过 15 字符 |
 
 这样：
 
@@ -167,31 +173,31 @@ Python 控制面           负责生成并下发静态 P4 表项
 ### 3.1 北京/上海两站点
 
 ```text
-                         public-border / FIX
+                         pub_border / FIX
                                 |
-                             C-bj (C2)
+                             C_bj (C2)
                             /        \
-                       E-bj          A-bj
+                       E_bj          A_bj
                         |              |
-                      S1-bj          S2-bj
+                      S1_bj          S2_bj
                         \              /
                          \            /
-                          cloud-bj
+                          cloud_bj
                              |
-                          C-bj ═════ C-sh
+                          C_bj ═════ C_sh
                              |
-                       E-sh          A-sh
+                       E_sh          A_sh
                         |              |
-                      S1-sh          S2-sh
+                      S1_sh          S2_sh
                         \              /
                          \            /
-                          cloud-sh
+                          cloud_sh
 ```
 
 说明：
 
-- `C-bj` 对应北京核心 C2，同时连接公网边界；
-- `C-bj` 与 `C-sh` 之间是核心互联；
+- `C_bj` 对应北京核心 C2，同时连接公网边界；
+- `C_bj` 与 `C_sh` 之间是核心互联；
 - 每个站点内部保持 PDF 的 `C -> E -> S1` 和 `C -> A -> S2` 分支；
 - 云服务器在 S1/S2 之间双归；
 - 首期只实现北京、上海，后续将同一模板复制到其他站点。
@@ -308,15 +314,15 @@ Ethernet -> VLAN -> IPv6 -> UDP -> VXLAN -> inner Ethernet -> inner VLAN -> inne
 以网络 ID 300、上海站点（站点 ID 2）为例：
 
 ```text
-cloud-sh(240a:a806:300:2::10)
-  -> S1-sh access VLAN 3800
-  -> E-sh P4: vlan_map(3800) -> vrf=300
+cloud_sh(240a:a806:300:2::10)
+  -> S1_sh access VLAN 3800
+  -> E_sh P4: vlan_map(3800) -> vrf=300
   -> l3_fib(vrf=300, 240a:a806:300:1::/64)
-  -> 下一跳：E-bj 的 SRv6 locator / 互联地址
-  -> C-sh/C-bj 或 E 之间的 underlay 转发
-  -> E-bj P4: vrf=300
+  -> 下一跳：E_bj 的 SRv6 locator / 互联地址
+  -> C_sh/C_bj 或 E 之间的 underlay 转发
+  -> E_bj P4: vrf=300
   -> l3_fib(vrf=300, 240a:a806:300:1::/64) 本地云服务器
-  -> S1-bj -> cloud-bj
+  -> S1_bj -> cloud_bj
 ```
 
 北京到上海的反向路径同理。
@@ -325,8 +331,8 @@ cloud-sh(240a:a806:300:2::10)
 
 ```text
 vlan_map: 3800 -> vrf 300, l3
-l3_fib:   (300, 240a:a806:300:1::/64) -> E-bj 下一跳
-l3_fib:   (300, 240a:a806:300:2::/64) -> E-sh 下一跳
+l3_fib:   (300, 240a:a806:300:1::/64) -> E_bj 下一跳
+l3_fib:   (300, 240a:a806:300:2::/64) -> E_sh 下一跳
 ```
 
 这只是 EVPN 控制面安装结果的静态等价物，不代表已经实现 BGP EVPN。
@@ -336,13 +342,13 @@ l3_fib:   (300, 240a:a806:300:2::/64) -> E-sh 下一跳
 以网络 ID 300、VLAN 3800 为例：
 
 ```text
-cloud-sh
-  -> S1-sh access VLAN 3800
-  -> E-sh P4: vlan_map(3800) -> l2vpn, vsi=300
+cloud_sh
+  -> S1_sh access VLAN 3800
+  -> E_sh P4: vlan_map(3800) -> l2vpn, vsi=300
   -> l2_fib(vlan=3800, dst_mac)
-  -> 远端 MAC：SRv6 封装到 E-bj 的 locator
-  -> E-bj 解封装
-  -> l2_fib 本地 MAC -> S1-bj -> cloud-bj
+  -> 远端 MAC：SRv6 封装到 E_bj 的 locator
+  -> E_bj 解封装
+  -> l2_fib 本地 MAC -> S1_bj -> cloud_bj
 ```
 
 PDF 的目标封装是 **EVPN SRv6**，不是 VXLAN。建议分两级实现：
@@ -356,9 +362,9 @@ PDF 的目标封装是 **EVPN SRv6**，不是 VXLAN。建议分两级实现：
 
 ## 8. 公网接入仿真
 
-`C-bj` 连接 `public-border` 和 `FIX`：
+`C_bj` 连接 `pub_border` 和 `fix`：
 
-- `public-border` 使用 netns，配置 `2001:255:0:100::A806/64`；
+- `pub_border` 使用 netns，配置 `2001:255:0:100::A806/64`；
 - `FIX` 使用 netns，配置 peer `2001:255:0:100::2000`；
 - 首期可用静态路由模拟 BGP 结果；
 - 需要验证 BGP 时，在 netns 中运行 FRR/BIRD；
@@ -422,7 +428,7 @@ Python 根据 `configs/parallel.json` 生成：
 
 ### 阶段 4：公网接入
 
-- C2 连接 public-border/FIX；
+- C2 连接 pub_border/FIX；
 - 配置默认路由、前缀过滤、aggregate；
 - 验证公网访问和未授权前缀过滤。
 
