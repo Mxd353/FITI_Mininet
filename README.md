@@ -72,7 +72,7 @@ parallel/                   并行网络仿真子项目
 ├── config.py               网络 ID、VLAN、IPv6 规划
 ├── topology.py             C/E/A/S1/S2/云服务器拓扑
 ├── switch.py               BMv2 交换机封装
-├── control.py              静态 L3VPN 表项下发
+├── control.py              静态 L3VPN/L2VPN 表项下发
 └── runtime.py              Mininet 构建与启动
 
 parallel_net.py             并行网络 CLI
@@ -109,8 +109,9 @@ make parallel-run-no-cli
 
 - `E`/`S1`/`S2` 使用 BMv2 + P4；
 - `C`/`A`/云服务器/公网边界使用 Linux netns；
-- 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN；
-- L3VPN 使用静态表项验证；L2VPN、公网接入、EVPN/SRv6 控制面后续实现；
+- 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN（VXLAN 过渡）；
+- L2VPN 使用扁平 /64 模拟跨站点广播域；
+- L3VPN 与 L2VPN 均使用静态表项验证；公网接入、EVPN/SRv6 控制面后续实现；
 - S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN。
 
 ## 环境要求

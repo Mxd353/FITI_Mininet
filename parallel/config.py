@@ -63,6 +63,10 @@ class ParallelConfig:
         return ipaddress.IPv6Network(
             '240a:a806:%d:%d::/64' % (network.id, site.id))
 
+    def l2_network(self, network: Network) -> ipaddress.IPv6Network:
+        """L2VPN uses one flat /64 so both sites share a broadcast domain."""
+        return ipaddress.IPv6Network('240a:a806:%d:1::/64' % network.id)
+
     def interconnect_network(self, network: Network,
                              site: Site) -> ipaddress.IPv6Network:
         return ipaddress.IPv6Network(
@@ -77,8 +81,15 @@ class ParallelConfig:
         return str(net.network_address + 2)
 
     def cloud_address(self, network: Network, site: Site,
-                      offset: int = 0x10) -> str:
-        net = self.business_network(network, site)
+                      offset: int = None) -> str:
+        if network.vpn == 'l2':
+            net = self.l2_network(network)
+            if offset is None:
+                offset = 0x10 if site.id == 1 else 0x11
+        else:
+            net = self.business_network(network, site)
+            if offset is None:
+                offset = 0x10
         return str(net.network_address + int(offset))
 
     def cloud_gateway(self, network: Network, site: Site) -> str:
@@ -167,8 +178,12 @@ def dump_config(cfg: ParallelConfig) -> None:
         print('  ID=%d VLAN=%d VPN=%s'
               % (network.id, network.vlan, network.vpn))
         for site in cfg.sites:
+            if network.vpn == 'l2':
+                subnet = cfg.l2_network(network)
+            else:
+                subnet = cfg.business_network(network, site)
             print('    %s: 业务 %s  互联 %s  云地址 %s'
                   % (site.abbr,
-                     cfg.business_network(network, site),
+                     subnet,
                      cfg.interconnect_network(network, site),
                      cfg.cloud_address(network, site)))
