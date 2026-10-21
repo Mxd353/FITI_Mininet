@@ -148,6 +148,9 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs):
             for underlay in ('fd00:0:1::/48', 'fd00:0:2::/48'):
                 _add(commands[e], names, 'l3_fib', 'forward_l3',
                      [network.id, underlay], [c_port, c_dmac, 0])
+            _add(commands[e], names, 'l3_fib', 'forward_l3',
+                 [network.id, '2001:255:0:100::/64'],
+                 [c_port, c_dmac, 0])
 
         # L2VPN: all frames in the VLAN are VXLAN-encapsulated to the peer E.
         for network in cfg.l2_networks():
@@ -242,6 +245,9 @@ def _configure_addresses(net, cfg):
               '2001:255:0:100::a806/64')
     _set_addr(net.get('pub_border'), _host_intf(net.get('pub_border'), c_name(bj)),
               '2001:255:0:100::1/64')
+    _set_addr(net.get('pub_border'),
+              _host_intf(net.get('pub_border'), 'fix'),
+              '2001:255:0:100::2/64')
     _set_addr(net.get('fix'), _host_intf(net.get('fix'), 'pub_border'),
               '2001:255:0:100::2000/64')
 
@@ -324,9 +330,44 @@ def _site_macs(net, cfg):
     }
 
 
+def _configure_public(net, cfg):
+    """Configure the C2 public exchange and static FIX routes."""
+    c_bj = net.get('C_bj')
+    c_sh = net.get('C_sh')
+    pub = net.get('pub_border')
+    fix = net.get('fix')
+    c_pub = _host_intf(c_bj, 'pub_border')
+    c_sh_bj = _host_intf(c_sh, c_name(cfg.site('bj')))
+    pub_c = _host_intf(pub, 'C_bj')
+    pub_fix = _host_intf(pub, 'fix')
+    fix_pub = _host_intf(fix, 'pub_border')
+
+    c_bj.cmd('ip -6 neigh replace 2001:255:0:100::1 lladdr %s dev %s nud permanent'
+             % (_host_mac(pub, 'C_bj'), c_pub.name))
+    pub.cmd('ip -6 neigh replace 2001:255:0:100::a806 lladdr %s dev %s nud permanent'
+            % (_host_mac(c_bj, 'pub_border'), pub_c.name))
+    pub.cmd('ip -6 neigh replace 2001:255:0:100::2000 lladdr %s dev %s nud permanent'
+            % (_host_mac(fix, 'pub_border'), pub_fix.name))
+    fix.cmd('ip -6 neigh replace 2001:255:0:100::2 lladdr %s dev %s nud permanent'
+            % (_host_mac(pub, 'fix'), fix_pub.name))
+
+    c_bj.cmd('ip -6 route replace 2001:255:0:100::2000/128 via '
+             '2001:255:0:100::1 dev %s' % c_pub.name)
+    c_sh.cmd('ip -6 route replace 2001:255:0:100::2000/128 via '
+             'fd00:0:1:0::1 dev %s' % c_sh_bj.name)
+    pub.cmd('ip -6 route replace 2001:255:0:100::2000/128 dev %s'
+            % pub_fix.name)
+    for prefix in ('240a:a806::/32', '240a:a807::/32'):
+        pub.cmd('ip -6 route replace %s via 2001:255:0:100::a806 dev %s'
+                % (prefix, pub_c.name))
+        fix.cmd('ip -6 route replace %s via 2001:255:0:100::2 dev %s'
+                % (prefix, fix_pub.name))
+
+
 def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
     names = runtime_names(json_path or cfg.p4_json)
     switch_ports = _port_maps(net)
     macs = _site_macs(net, cfg)
     _install_switch_tables(net, cfg, names, switch_ports, macs)
     _configure_routers(net, cfg, macs)
+    _configure_public(net, cfg)

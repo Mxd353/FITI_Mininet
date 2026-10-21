@@ -111,8 +111,17 @@ make parallel-run-no-cli
 - `C`/`A`/云服务器/公网边界使用 Linux netns；
 - 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN（VXLAN 过渡）；
 - L2VPN 使用扁平 /64 模拟跨站点广播域；
-- L3VPN 与 L2VPN 均使用静态表项验证；公网接入、EVPN/SRv6 控制面后续实现；
+- L3VPN、L2VPN 和 C2/FIX 公网接入均使用静态表项验证；EVPN/SRv6 控制面后续实现；
 - S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN。
+
+公网接入验证：
+
+```text
+cloud_bj_1 ping6 -c 3 2001:255:0:100::2000
+cloud_sh_1 ping6 -c 3 2001:255:0:100::2000
+fix ping6 -c 3 240a:a806:1:1::10
+fix ping6 -c 3 240a:a806:2:2::10
+```
 
 ## 环境要求
 
