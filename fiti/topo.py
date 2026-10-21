@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 """用 Mininet + bmv2 模拟 configs/fiti.json 描述的 FITI 骨干拓扑。
 
-拓扑规模: 41 个节点 / 43 条链路 (以 fiti.json 的 nodes/links 为准)。
+拓扑规模: 默认 41 个节点 / 43 条链路; 节点可设置 "enabled": false 按需跳过。
 
 建模方式:
-  - 每个节点 <id> 运行一台 bmv2 simple_switch, 名为 s<id>;
+  - 每个启用节点 <id> 运行一台 bmv2 simple_switch, 名为 s<id>;
+  - 禁用节点不创建交换机和主机, 与其相连的链路也不参与有效拓扑;
   - 每台交换机加载同一个 P4 程序 (p4src/fiti_slice.p4), 做 VLAN 感知的二层转发;
   - 每个节点再挂一台主机, 主机名取节点的 abbr (如 bj/sh/xa), IP 为 10.0.0.<id>/24;
   - 交换机之间按 fiti.json 的 links 互联, link.weight (4/2/1) 映射为链路带宽等级;
@@ -21,7 +22,7 @@
   sudo python3 fiti_topo.py --random-traffic   # 不同节点随机互 ping 后退出
   sudo python3 fiti_topo.py --random-traffic --traffic-continuous  # 持续发包
   sudo python3 fiti_topo.py --no-tc            # 使用普通链路, 不做带宽限制
-  sudo python3 fiti_topo.py --no-hosts         # 只建 41 台 bmv2 交换机
+  sudo python3 fiti_topo.py --no-hosts         # 只建启用节点的 bmv2 交换机
   python3 fiti_topo.py --dump                  # 只打印拓扑统计, 不启动 Mininet (免 root)
   sudo python3 fiti_topo.py --slices configs/slices.json   # 统一入口: 转交 fiti_slice.py
 
@@ -91,6 +92,8 @@ __all__ = [
     'DEFAULT_BW_MAP',
     'DEFAULT_P4_JSON',
     'DEFAULT_THRIFT_BASE',
+    'node_enabled',
+    'effective_topology',
     'FitiTopo',
     'build_topology',
     'build_net',
@@ -177,7 +180,8 @@ def get_switch(net, node_id):
 
 
 def build_base_host_plan(data, vlan=BASE_VLAN):
-    """基础拓扑的主机规划: 每个节点一台主机, 全部在同一个 VLAN。"""
+    """基础拓扑的主机规划: 每个启用节点一台主机, 全部在同一个 VLAN。"""
+    data = effective_topology(data)
     plan = {}
     for node in data['nodes']:
         node_id = str(node['id'])
@@ -216,8 +220,65 @@ def build_traffic_hosts(net, host_plan, group='base'):
 # 拓扑文件读取与校验
 # --------------------------------------------------------------------------
 
+def node_enabled(node):
+    """返回节点是否应在 Mininet 中启动。
+
+    ``fiti.json`` 的节点字段 ``enabled`` 缺省为 true；显式设为 false 时，
+    该节点不会创建 bmv2 交换机和主机，相关链路也会被过滤。
+    """
+    value = node.get('enabled', True)
+    if not isinstance(value, bool):
+        raise SystemExit('节点 %s 的 enabled 必须是 true/false'
+                         % node.get('id', '?'))
+    return value
+
+
+def _filter_enabled_topology(data):
+    raw_nodes = data['nodes']
+    raw_links = data['links']
+    enabled_ids = set()
+    disabled = []
+    for node in raw_nodes:
+        node_id = str(node['id'])
+        if node_enabled(node):
+            enabled_ids.add(node_id)
+        else:
+            disabled.append({'id': node_id,
+                             'abbr': node.get('abbr', ''),
+                             'name': node.get('name', '')})
+    if not enabled_ids:
+        raise SystemExit('fiti.json 没有已启用的节点；'
+                         '请至少保留一个 enabled=true 的节点')
+
+    nodes = [node for node in raw_nodes
+             if str(node['id']) in enabled_ids]
+    links = [link for link in raw_links
+             if str(link['src']) in enabled_ids
+             and str(link['dst']) in enabled_ids]
+
+    # Keep the full-file counts/degrees for validation and display.  The
+    # effective nodes/links above are what Mininet and the control plane use.
+    source_degrees = {str(node['id']): 0 for node in raw_nodes}
+    for link in raw_links:
+        src, dst = str(link['src']), str(link['dst'])
+        if src in source_degrees:
+            source_degrees[src] += 1
+        if dst in source_degrees:
+            source_degrees[dst] += 1
+
+    data['nodes'] = nodes
+    data['links'] = links
+    data['_disabled'] = disabled
+    data['_source'] = {
+        'nodes': len(raw_nodes),
+        'links': len(raw_links),
+        'degrees': source_degrees,
+    }
+    return data
+
+
 def load_topology(path=None):
-    """读取 fiti.json 并做基本结构检查, 返回原始 dict。"""
+    """读取 fiti.json，按节点 enabled 字段返回实际启动的拓扑视图。"""
     path = path or DEFAULT_TOPO_FILE
     if not os.path.isfile(path):
         raise SystemExit('找不到拓扑文件: %s' % path)
@@ -226,7 +287,20 @@ def load_topology(path=None):
     for key in ('nodes', 'links'):
         if key not in data or not isinstance(data[key], list):
             raise SystemExit('拓扑文件缺少 "%s" 列表: %s' % (key, path))
-    return data
+    return _filter_enabled_topology(data)
+
+
+def effective_topology(data=None):
+    """返回已应用 enabled 过滤的拓扑数据。
+
+    ``data`` 为 None 时读取默认 fiti.json；若传入的是原始 dict，
+    则复制并过滤，避免调用方绕过 load_topology 时仍创建禁用节点。
+    """
+    if data is None:
+        return load_topology()
+    if '_source' in data:
+        return data
+    return _filter_enabled_topology(dict(data))
 
 
 def compute_degrees(data):
@@ -259,7 +333,8 @@ def validate_topology(data):
         warnings.append('节点 abbr 存在重复: %s' % ', '.join(dup))
 
     known = set(ids)
-    degrees = compute_degrees(data)
+    source = data.get('_source', {})
+    degrees = source.get('degrees') or compute_degrees(data)
     seen = set()
     for link in links:
         src, dst = str(link['src']), str(link['dst'])
@@ -273,6 +348,26 @@ def validate_topology(data):
             warnings.append('存在重复链路: %s - %s' % (src, dst))
         seen.add(key)
 
+    if nodes:
+        adjacency = {str(node['id']): [] for node in nodes}
+        for link in links:
+            src, dst = str(link['src']), str(link['dst'])
+            if src in adjacency and dst in adjacency:
+                adjacency[src].append(dst)
+                adjacency[dst].append(src)
+        start = next(iter(adjacency))
+        visited = {start}
+        stack = [start]
+        while stack:
+            current = stack.pop()
+            for neighbor in adjacency[current]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    stack.append(neighbor)
+        if len(visited) != len(adjacency):
+            warnings.append('启用节点构成的拓扑不连通（%d/%d 个节点可达）'
+                            % (len(visited), len(adjacency)))
+
     for node in nodes:
         declared = node.get('degree')
         actual = degrees[str(node['id'])]
@@ -282,12 +377,14 @@ def validate_topology(data):
                 % (node['id'], node['name'], declared, actual))
 
     stats = data.get('statistics', {})
-    if stats.get('total_links') is not None and int(stats['total_links']) != len(links):
-        warnings.append('statistics.total_links=%s 与 links 实际条数 %d 不一致'
-                        % (stats['total_links'], len(links)))
-    if stats.get('total_nodes') is not None and int(stats['total_nodes']) != len(nodes):
-        warnings.append('statistics.total_nodes=%s 与 nodes 实际个数 %d 不一致'
-                        % (stats['total_nodes'], len(nodes)))
+    source_links = source.get('links', len(links))
+    source_nodes = source.get('nodes', len(nodes))
+    if stats.get('total_links') is not None and int(stats['total_links']) != source_links:
+        warnings.append('statistics.total_links=%s 与拓扑文件 links 实际条数 %d 不一致'
+                        % (stats['total_links'], source_links))
+    if stats.get('total_nodes') is not None and int(stats['total_nodes']) != source_nodes:
+        warnings.append('statistics.total_nodes=%s 与拓扑文件 nodes 实际个数 %d 不一致'
+                        % (stats['total_nodes'], source_nodes))
     return warnings
 
 
@@ -308,7 +405,17 @@ def dump_topology(data, bw_map=None, path=None):
 
     print('拓扑文件: %s' % os.path.abspath(path or DEFAULT_TOPO_FILE))
     print('数据平面: bmv2 simple_switch + p4src/fiti_slice.p4')
-    print('节点: %d   链路: %d' % (len(nodes), len(links)))
+    disabled = data.get('_disabled', [])
+    source = data.get('_source', {})
+    if disabled:
+        print('节点: %d 启用 / %d 总数（禁用 %d）   链路: %d 启用 / %d 总数'
+              % (len(nodes), source.get('nodes', len(nodes)), len(disabled),
+                 len(links), source.get('links', len(links))))
+        print('已禁用节点: %s'
+              % ', '.join('%s(%s)' % (item.get('name', ''), item['abbr'])
+                          for item in disabled))
+    else:
+        print('节点: %d   链路: %d' % (len(nodes), len(links)))
     print('链路 weight 分布: %s'
           % ', '.join('weight=%s: %d 条' % (w, c)
                       for w, c in sorted(weight_count.items(),
@@ -322,7 +429,8 @@ def dump_topology(data, bw_map=None, path=None):
 
     print()
     print('%-4s %-12s %-8s %-8s %-8s %s'
-          % ('id', 'name', 'abbr', 'switch', 'host', 'degree(declared)'))
+          % ('id', 'name', 'abbr', 'switch', 'host',
+             'degree(active/declared)'))
     for node in nodes:
         nid = str(node['id'])
         print('%-4s %-12s %-8s %-8s %-8s %d(%s)'
@@ -354,8 +462,7 @@ class FitiTopo(Topo):
     """
 
     def build(self, data=None, with_hosts=True, bw_map=None):
-        if data is None:
-            data = load_topology()
+        data = effective_topology(data)
         if bw_map is None:
             bw_map = DEFAULT_BW_MAP
         by_id = {str(node['id']): node for node in data['nodes']}
@@ -417,8 +524,7 @@ def build_net(data=None, with_hosts=True, bw_map=None, use_tc=True,
       Mininet 实例; 调用方负责 net.stop()。
       已启动且 install_rules=True 时, net.p4_fabric 保存规则规划结果。
     """
-    if data is None:
-        data = load_topology()
+    data = effective_topology(data)
     _warn_issues(data)
 
     if not use_tc:
@@ -531,7 +637,7 @@ def build_parser():
     parser.add_argument('--dump', action='store_true',
                         help='只打印拓扑统计信息后退出, 不启动 Mininet')
     parser.add_argument('--no-hosts', action='store_true',
-                        help='只创建交换机, 不创建主机')
+                        help='只创建启用节点的交换机, 不创建主机')
     parser.add_argument('--no-tc', action='store_true',
                         help='使用普通链路 (不做带宽限制, 不需要 TCLink)')
     parser.add_argument('--bw-map', default=DEFAULT_BW_MAP_STR,

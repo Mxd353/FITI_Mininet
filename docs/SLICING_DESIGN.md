@@ -25,7 +25,8 @@
 
 目标：
 
-- 41 个 FITI 节点全部由 bmv2 `simple_switch` 实现
+- 默认 41 个 FITI 节点全部由 bmv2 `simple_switch` 实现
+- 节点支持 `"enabled": false` 按需跳过，节省 bmv2 进程和 Mininet 资源
 - 每台交换机加载同一个 P4 程序，做 VLAN 感知的二层转发
 - 同一台交换机可同时承载多个切片的主机（每节点多切片）
 - 每个切片有独立主机、IPv4 子网和 VLAN
@@ -44,8 +45,9 @@
 
 ## 2. 架构
 
-- 物理层复用 `configs/fiti.json` 的 41 个节点和 43 条骨干链路
-- 每个节点运行一台 bmv2 `simple_switch`，进程名 `s<节点id>`
+- 物理层复用 `configs/fiti.json` 的节点和骨干链路；默认 41 节点 / 43 链路
+- 节点 `"enabled": false` 时不创建 bmv2 和主机，相关链路从有效拓扑中过滤
+- 每个启用节点运行一台 bmv2 `simple_switch`，进程名 `s<节点id>`
 - 每个节点的主机接在该交换机的 access 端口上，端口配置为对应切片的 VLAN
 - 交换机之间为 802.1Q trunk，承载所有切片 VLAN
 - 控制面 `fiti/p4.py` 预计算一棵 BFS 生成树，只启用树边
@@ -78,7 +80,7 @@ s15 - s4
 
 | 对象          | 规则                                             |
 | ------------- | ------------------------------------------------ |
-| 交换机        | `s<节点id>`，41 台，共享                         |
+| 交换机        | `s<节点id>`，默认 41 台，可禁用，共享              |
 | 基础主机      | 节点 `abbr`，IP `10.0.0.<节点id>/24`，VLAN 100   |
 | 切片主机      | `<切片id>_<abbr>`，如 `nor_bj`、`demo_bj`        |
 | 切片主机 IPv4 | `10.<切片序号>.0.<节点id>/24`                    |
@@ -97,6 +99,7 @@ s15 - s4
 
 `configs/slices.json` 的核心字段：
 
+- 节点：`id`、`name`、`abbr`、`enabled`、`x`、`y`、`degree`
 - 全局：`topo`、`datapath`、`isolation`、`p4`、`p4runtime`、`control`、`defaults`、`srv6`
 - 切片：`id`、`name`、`vlan`、`subnet`、`hosts`、`paths`
 - `p4`：`json`、`thrift_base`、`log_level`、`log_dir`、`pcap`、`pcap_dir`、`spanning_root`
@@ -108,6 +111,7 @@ s15 - s4
 
 - `id`、`vlan`、`subnet` 全局唯一，子网不得重叠
 - `hosts` 必须是合法节点 `abbr` 列表或 `"all"`；同一 `abbr` 可出现在多个切片中
+- `hosts` 不得引用 `"enabled": false` 的节点；`"all"` 只展开启用节点
 - VLAN 必须在 1–4094，主机 IP 必须落在对应子网内
 - 已放弃的字段 `controller`、`nodes`、切片级 `controller`、`bw_share` 会直接报错
 - `bridge` 隔离模式、非 `bmv2` 数据平面会直接报错
@@ -262,7 +266,7 @@ bj buaa bupt cd chc ...
 *** Adding switches:
 s1 s2 s3 s4 s5 ...
 *** 启动 bmv2 交换机 / (12.4s)
-*** 41 台 bmv2 交换机已启动 (12.4s)
+*** N 台 bmv2 交换机已启动 (12.4s)
 *** 下发 P4 流表 [##########----------] 21/41 (8.1s)
 *** P4 流表下发完成 (8.1s)
 ```
@@ -381,8 +385,8 @@ VLAN 接入、`l2_fwd` 单播路径、生成树泛洪和跨切片端到端不可
 
 | 项目                                | 估算                                                        |
 | ----------------------------------- | ----------------------------------------------------------- |
-| 交换机进程                          | 41 个 `simple_switch`，每个约 20–60 MB RSS，合计约 1–2.5 GB |
-| 主机                                | 基础模式 41 台；示例切片 47 台（含 6 台重叠主机）           |
+| 交换机进程                          | 每个启用节点一个 `simple_switch`，约 20–60 MB RSS |
+| 主机                                | 基础模式每个启用节点一台；示例切片 47 台（含 6 台重叠主机） |
 | 每交换机 `l2_fwd`                   | 主机总数（示例 47）                                         |
 | 每交换机多播组                      | 切片数（示例 5）                                            |
 | 每交换机 `port_cfg` / `egress_port` | access 端口 + 活动 trunk 端口（最大节点约 14）              |
@@ -420,7 +424,7 @@ P4 数据平面用 `simple_switch --use-files` + 手工 pcap 做过转发验证�
 | 入端口回灌                     | 多播组包含入端口，但 egress 自环抑制后入端口无输出               |
 | trunk 收到 VLAN 101 但无对应组 | 丢弃，不泄露到 VLAN 100                                          |
 
-完整 41 节点运行需要 root：
+完整启动所有节点需要 root：
 
 ```bash
 sudo python3 fiti_slice.py --slices configs/slices.json --check
