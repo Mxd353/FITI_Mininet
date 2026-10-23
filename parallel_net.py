@@ -45,6 +45,10 @@ def main(argv=None):
                         help='启动后不进入 Mininet CLI')
     parser.add_argument('--no-install', action='store_true',
                         help='只启动拓扑，不下发 P4 表项')
+    parser.add_argument('--evpn-socket', default='/tmp/parallel_evpn.sock',
+                        help='EVPN 动态路由 agent 的 Unix socket')
+    parser.add_argument('--no-evpn-agent', action='store_true',
+                        help='不启动 EVPN 动态路由 agent')
     parser.add_argument('--p4-json', default=None,
                         help='P4 编译产物路径')
     parser.add_argument('--thrift-base', type=int, default=None,
@@ -69,6 +73,7 @@ def main(argv=None):
 
     log_dir = ensure_log_dir(args.log_dir)
     net = None
+    evpn_agent = None
     try:
         net = build_parallel_net(
             cfg,
@@ -78,11 +83,18 @@ def main(argv=None):
             install_rules=not args.no_install)
         print('*** 并行网络已启动')
         print('*** 交换机: %s' % ' '.join(sorted(sw.name for sw in net.switches)))
+        if not args.no_install and not args.no_evpn_agent:
+            from parallel.evpn_agent import start_evpn_agent
+            evpn_agent = start_evpn_agent(net, cfg, args.evpn_socket)
+            print('*** EVPN agent: %s' % evpn_agent.socket_path)
         if args.no_cli:
             while True:
                 time.sleep(1)
         CLI(net)
     finally:
+        if evpn_agent is not None:
+            from parallel.evpn_agent import stop_evpn_agent
+            stop_evpn_agent(evpn_agent)
         if net is not None:
             net.stop()
     return 0

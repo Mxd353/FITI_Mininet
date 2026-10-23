@@ -426,7 +426,27 @@ python3 parallel_evpn.py --json /tmp/evpn-routes.json
 免 root 模式输出 16 条本地路由（8 条 IP Prefix + 8 条 IMET）；Mininet
 启动后增加 8 条云服务器 MAC/IP 路由，共 24 条。
 
-### 9.2 后续：协议控制面
+### 9.2 动态路由更新 agent
+
+`parallel/evpn_agent.py` 在 Mininet 进程内启动 Unix socket，默认路径为
+`/tmp/parallel_evpn.sock`。它把 `advertise` / `withdraw` 路由事件转换为
+bmv2 表项和 Linux C 路由更新：
+
+- L3 IP Prefix：更新 `vrf_map`、`l3_fib`、`local_sid` 和 C 路由；
+- L2 MAC/IP：更新 `l2_tunnel`、S1/S2 的 `l2_fib` 和云服务器邻居；
+- 支持替换和撤销；路由不存在或校验失败时返回错误。
+
+```bash
+python3 parallel_evpn_ctl.py status
+python3 parallel_evpn_ctl.py dump
+python3 parallel_evpn_ctl.py advertise --file /tmp/evpn-route.json
+python3 parallel_evpn_ctl.py withdraw --file /tmp/evpn-route.json
+```
+
+当前 agent 不动态修改 IMET/BUM multicast group；BUM 组仍由静态控制面安装。
+真实 BGP 会话、Route Reflector 和 EVPN NLRI 编解码仍未实现。
+
+### 9.3 后续：协议控制面
 
 - underlay：FRR/BIRD 在 netns 中运行 OSPFv3/IS-IS/BGP；
 - 公网：FRR/BIRD 与 FIX 建立 BGP；
@@ -434,10 +454,10 @@ python3 parallel_evpn.py --json /tmp/evpn-routes.json
 - SRv6：需要 locator 分配、SID 发布和 EVPN 路由到 SID 的映射；
 - BMv2 只负责数据平面，不能单独完成 EVPN/BGP 控制面。
 
-推荐接入顺序：先用 `RouteTable` 作为 FRR/ExaBGP 与 P4 表项之间的适配层，
-在北京/上海验证路由增删/撤销；再验证北京/上海/广州/成都四站点 L3VPN；
-最后批量生成 41 个站点配置。当前已完成四站点 L3VPN/L2VPN 静态数据平面，
-路由模型不包含 BGP FSM、Route Reflector 和 EVPN NLRI 编解码。
+推荐接入顺序：先用 `RouteTable`/agent 在北京/上海验证路由增删/撤销；
+再验证北京/上海/广州/成都四站点 L3VPN/L2VPN；最后接入 FRR/ExaBGP 并
+批量生成 41 个站点配置。当前路由模型和 agent 不包含 BGP FSM、Route
+Reflector 和 EVPN NLRI 编解码。
 
 ## 10. 实施阶段
 
@@ -478,6 +498,7 @@ python3 parallel_evpn.py --json /tmp/evpn-routes.json
 ### 阶段 5：EVPN/SRv6 控制面
 
 - 引入 EVPN 路由模型（已完成第一阶段）；
+- 增加 RouteTable -> P4 动态更新 agent（已完成）；
 - 引入 SRv6 locator/SID；
 - 验证控制面安装结果与静态表项一致；
 - 接入 FRR/ExaBGP，验证 BGP EVPN 会话和路由撤销；

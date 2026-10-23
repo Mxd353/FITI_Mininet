@@ -73,11 +73,13 @@ parallel/                   并行网络仿真子项目
 ├── topology.py             C/E/A/S1/S2/云服务器拓扑
 ├── switch.py               BMv2 交换机封装
 ├── evpn.py                 EVPN 路由模型与 SID/VNI 分配
+├── evpn_agent.py           动态路由更新 agent 与 Unix socket
 ├── control.py              静态 L3VPN/L2VPN 表项下发
 └── runtime.py              Mininet 构建与启动
 
 parallel_net.py             并行网络 CLI
 parallel_evpn.py            EVPN 路由模型 CLI
+parallel_evpn_ctl.py        动态路由 agent 客户端
 p4src/parallel_vpn.p4       VLAN + L2 + L3VPN 数据平面
 p4src/fiti_slice.p4         VLAN L2 + 多段 SRv6 P4 程序
 fiti_topo.py                基础拓扑 CLI 兼容入口
@@ -145,6 +147,44 @@ L3VPN 的 `l3_fib`/`local_sid` 和 L2VPN 的 SRv6 隧道/解封装已经由这�
 
 这是路由模型，不是 BGP 有限状态机；尚未实现 Route Reflector、EVPN
 NLRI 编解码和真实 BGP 会话。
+
+### 动态路由更新 agent
+
+`make parallel-run` 启动 Mininet 后会自动启动 EVPN agent，默认 socket：
+
+```text
+/tmp/parallel_evpn.sock
+```
+
+查询状态：
+
+```bash
+python3 parallel_evpn_ctl.py status
+python3 parallel_evpn_ctl.py dump
+```
+
+动态增加一条 L3 IP Prefix 路由（示例前缀只用于演示）：
+
+```bash
+cat >/tmp/evpn-route.json <<'JSON'
+{
+  "type": "ip-prefix",
+  "rd": "9425:1",
+  "rt": ["9425:1"],
+  "prefix": "240a:a806:1:3:abcd::/80",
+  "vni": 1,
+  "sid": "fd00:0:3:1::101",
+  "origin": "gz",
+  "next_hop": "fd00:0:3:1::101"
+}
+JSON
+python3 parallel_evpn_ctl.py advertise --file /tmp/evpn-route.json
+python3 parallel_evpn_ctl.py withdraw --file /tmp/evpn-route.json
+```
+
+agent 支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；IMET/BUM multicast group
+仍由静态控制面安装。使用 `--no-evpn-agent` 可以关闭 agent，使用
+`--evpn-socket PATH` 可以修改 socket 路径。
 
 公网接入验证：
 
