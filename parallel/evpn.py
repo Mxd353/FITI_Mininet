@@ -226,7 +226,7 @@ def build_evpn_routes(cfg: ParallelConfig, net=None,
     for network in cfg.l3_networks():
         rd = '9425:%d' % network.id
         rt = (rd,)
-        for site in cfg.sites:
+        for site in cfg.network_sites(network):
             sid = cfg.srv6_sid(network, site)
             table.advertise(EvpnIpPrefixRoute(
                 rd=rd, rt=rt,
@@ -237,7 +237,7 @@ def build_evpn_routes(cfg: ParallelConfig, net=None,
     for network in cfg.l2_networks():
         rd = '9425:%d' % network.id
         rt = (rd,)
-        for site in cfg.sites:
+        for site in cfg.network_sites(network):
             sid = cfg.l2_sid(network, site)
             table.advertise(EvpnInclusiveMulticastRoute(
                 rd=rd, rt=rt, vni=network.id, sid=sid,

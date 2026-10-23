@@ -40,6 +40,12 @@ SWITCH_IDS = {
     'E_sh': 4,
     'S1_sh': 5,
     'S2_sh': 6,
+    'E_gz': 7,
+    'S1_gz': 8,
+    'S2_gz': 9,
+    'E_cd': 10,
+    'S1_cd': 11,
+    'S2_cd': 12,
 }
 
 PUBLIC_BORDER = 'pub_border'
@@ -70,7 +76,6 @@ class ParallelTopology(Topo):
         cfg = self.cfg
         sites = {site.abbr: site for site in cfg.sites}
         bj = sites['bj']
-        sh = sites['sh']
 
         # Routers / public border / servers are Linux netns.
         for site in cfg.sites:
@@ -86,10 +91,13 @@ class ParallelTopology(Topo):
                 # datapath id for non-canonical switch names.
                 self.addSwitch(name, dpid='%016x' % SWITCH_IDS[name])
 
-        # Core and site uplinks. IPv6 addresses are configured with
-        # ``ip -6 addr replace`` after net.start; Mininet's ifconfig-based
-        # link parameters only handle IPv4 reliably.
-        self.addLink(c_name(bj), c_name(sh))
+        # Core and site uplinks.  The core is a Beijing-centred star:
+        # C_bj -- C_sh, C_bj -- C_gz, C_bj -- C_cd.  IPv6 addresses are
+        # configured with ``ip -6 addr replace`` after net.start; Mininet's
+        # ifconfig-based link parameters only handle IPv4 reliably.
+        for site in cfg.sites:
+            if site.abbr != bj.abbr:
+                self.addLink(c_name(bj), c_name(site))
         for site in cfg.sites:
             self.addLink(c_name(site), e_name(site))
             self.addLink(c_name(site), a_name(site))
@@ -100,9 +108,10 @@ class ParallelTopology(Topo):
         self.addLink(c_name(bj), PUBLIC_BORDER)
         self.addLink(PUBLIC_BORDER, PUBLIC_FIX)
 
-        # Each cloud server has two NICs: eth0 -> S1, eth1 -> S2.
+        # Each cloud server has two NICs: eth0 -> S1, eth1 -> S2.  Only
+        # create cloud servers on sites that belong to the network.
         for site in cfg.sites:
-            for network in cfg.networks:
+            for network in cfg.networks_for_site(site):
                 host = cloud_name(site, network)
                 self.addHost(host)
                 self.addLink(host, s1_name(site))

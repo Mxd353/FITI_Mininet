@@ -25,9 +25,14 @@ def _peer_intf(intf):
     return link.intf2 if link.intf1 is intf else link.intf1
 
 
-def _port_maps(net):
+def _switch_names(cfg):
+    return tuple(name for site in cfg.sites
+                 for name in (e_name(site), s1_name(site), s2_name(site)))
+
+
+def _port_maps(net, cfg):
     switch_ports = {}
-    for sw_name in SWITCH_NAMES:
+    for sw_name in _switch_names(cfg):
         switch = net.get(sw_name)
         ports = {}
         for port, intf in switch.intfs.items():
@@ -41,9 +46,6 @@ def _port_maps(net):
     return switch_ports
 
 
-SWITCH_NAMES = ('E_bj', 'S1_bj', 'S2_bj', 'E_sh', 'S1_sh', 'S2_sh')
-
-
 def _host_intf(host, peer_name):
     for intf in host.intfs.values():
         peer = _peer_intf(intf)
@@ -54,6 +56,15 @@ def _host_intf(host, peer_name):
 
 def _host_mac(host, peer_name):
     return _host_intf(host, peer_name).MAC()
+
+
+def _network_peer(cfg, network, site):
+    peers = [item for item in cfg.network_sites(network)
+             if item.id != site.id]
+    if len(peers) != 1:
+        raise RuntimeError('网络 %d 当前只支持两个站点，%s 的远端站点数为 %d'
+                           % (network.id, site.abbr, len(peers)))
+    return peers[0]
 
 
 def _switch_mac(net, switch_name_, peer_name):
@@ -98,7 +109,7 @@ def _add_port(cmds, names, port, action, egress_action, vlan=None):
 
 
 def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
-    commands = {name: [] for name in SWITCH_NAMES}
+    commands = {name: [] for name in _switch_names(cfg)}
 
     for site in cfg.sites:
         e = e_name(site)
@@ -113,12 +124,13 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
         # E: C-facing core port + S1-facing trunk.
         _add_port(commands[e], names, e_ports[c], 'set_core', 'set_core')
         _add_port(commands[e], names, e_ports[s1], 'set_trunk', 'set_trunk')
-        for network in cfg.l3_networks():
-            _add(commands[e], names, 'vlan_map', 'map_l3',
-                 [network.vlan], [network.id])
-        for network in cfg.l2_networks():
-            _add(commands[e], names, 'vlan_map', 'map_l2',
-                 [network.vlan])
+        for network in cfg.networks_for_site(site):
+            if network.vpn == 'l3':
+                _add(commands[e], names, 'vlan_map', 'map_l3',
+                     [network.vlan], [network.id])
+            else:
+                _add(commands[e], names, 'vlan_map', 'map_l2',
+                     [network.vlan])
 
         c_port = e_ports[c]
         c_dmac = _host_mac(net.get(c), e)
@@ -149,7 +161,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                      [network.id, route.prefix],
                      [local_route.sid, route.sid, c_dmac, c_port])
 
-        for network in cfg.l3_networks():
+        for network in cfg.l3_networks_for_site(site):
             local_route = evpn_routes.l3_route(network.id, site.abbr)
             if local_route is None:
                 raise RuntimeError('站点 %s 缺少网络 %d 的本地 EVPN 路由'
@@ -163,15 +175,18 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             # The Linux core routers use underlay source addresses.  Replies
             # from cloud servers therefore have an underlay destination and
             # must be sent back to C, not dropped by the VRF FIB.
-            for underlay in ('fd00:0:1::/48', 'fd00:0:2::/48'):
+            # Keep local and remote underlay routes: Linux C routers may
+            # use underlay source addresses in replies to cloud servers.
+            for target in cfg.network_sites(network):
                 _add(commands[e], names, 'l3_fib', 'forward_l3',
-                     [network.id, underlay], [c_port, c_dmac, 0])
+                     [network.id, cfg.underlay_network(target)],
+                     [c_port, c_dmac, 0])
             _add(commands[e], names, 'l3_fib', 'forward_l3',
                  [network.id, '2001:255:0:100::/64'],
                  [c_port, c_dmac, 0])
 
         # L2VPN: SRv6 by default; VXLAN remains available as a fallback.
-        for network in cfg.l2_networks():
+        for network in cfg.l2_networks_for_site(site):
             local_route = evpn_routes.imet_route(network.id, site.abbr)
             if local_route is None:
                 raise RuntimeError('站点 %s 缺少网络 %d 的 L2 EVPN 路由'
@@ -191,8 +206,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                      ['%s/128' % local_route.sid],
                      [e_ports[s1]])
             else:
-                peer = next(item for item in cfg.sites
-                            if item.id != site.id)
+                peer = _network_peer(cfg, network, site)
                 src_ip = 'fd00:0:%d:1::2' % site.id
                 dst_ip = 'fd00:0:%d:1::2' % peer.id
                 _add(commands[e], names, 'l2_tunnel', 'vxlan_encap',
@@ -205,7 +219,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
         _add_port(commands[s1], names, s1_ports[e], 'set_trunk', 'set_trunk')
         _add(commands[s1], names, 'uplink_filter', 'allow_parallel',
              [s1_ports[e]])
-        for network in cfg.networks:
+        for network in cfg.networks_for_site(site):
             host = cloud_name(site, network)
             port = s1_ports[host]
             _add_port(commands[s1], names, port, 'set_access', 'set_access',
@@ -217,8 +231,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             _add(commands[s1], names, 'l2_fib', 'forward_l2',
                  [network.vlan, macs[site.abbr]['e_s1']], [s1_ports[e]])
             if network.vpn == 'l2':
-                peer = next(item for item in cfg.sites
-                            if item.id != site.id)
+                peer = _network_peer(cfg, network, site)
                 peer_mac = _host_mac(
                     net.get(cloud_name(peer, network)), s1_name(peer))
                 _add(commands[s1], names, 'l2_fib', 'forward_l2',
@@ -228,7 +241,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
         _add_port(commands[s2], names, s2_ports[a], 'set_trunk', 'set_trunk')
         _add(commands[s2], names, 'uplink_filter', 'deny_parallel',
              [s2_ports[a]])
-        for network in cfg.networks:
+        for network in cfg.networks_for_site(site):
             host = cloud_name(site, network)
             port = s2_ports[host]
             _add_port(commands[s2], names, port, 'set_access', 'set_access',
@@ -240,8 +253,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             _add(commands[s2], names, 'l2_fib', 'forward_l2',
                  [network.vlan, _host_mac(net.get(a), s2)], [s2_ports[a]])
             if network.vpn == 'l2':
-                peer = next(item for item in cfg.sites
-                            if item.id != site.id)
+                peer = _network_peer(cfg, network, site)
                 peer_mac = _host_mac(
                     net.get(cloud_name(peer, network)), s2_name(peer))
                 _add(commands[s2], names, 'l2_fib', 'forward_l2',
@@ -259,13 +271,17 @@ def _set_addr(host, intf, address):
 def _configure_addresses(net, cfg):
     """Assign IPv6 addresses explicitly; Mininet ifconfig ignores IPv6."""
     bj = cfg.site('bj')
-    sh = cfg.site('sh')
     c_bj = net.get(c_name(bj))
-    c_sh = net.get(c_name(sh))
-    c_bj_sh = _host_intf(c_bj, c_name(sh))
-    c_sh_bj = _host_intf(c_sh, c_name(bj))
-    _set_addr(c_bj, c_bj_sh, 'fd00:0:1:0::1/64')
-    _set_addr(c_sh, c_sh_bj, 'fd00:0:1:0::2/64')
+
+    # Beijing-centred core links: C_bj -- C_sh/C_gz/C_cd.
+    for site in cfg.sites:
+        if site.abbr == bj.abbr:
+            continue
+        c_site = net.get(c_name(site))
+        _set_addr(c_bj, _host_intf(c_bj, c_name(site)),
+                  cfg.core_address(bj, site) + '/64')
+        _set_addr(c_site, _host_intf(c_site, c_name(bj)),
+                  cfg.core_address(site, bj) + '/64')
 
     for site in cfg.sites:
         c = net.get(c_name(site))
@@ -289,7 +305,7 @@ def _configure_addresses(net, cfg):
               '2001:255:0:100::2000/64')
 
     for site in cfg.sites:
-        for network in cfg.networks:
+        for network in cfg.networks_for_site(site):
             cloud = net.get(cloud_name(site, network))
             _set_addr(cloud, _host_intf(cloud, s1_name(site)),
                       cfg.cloud_address(network, site) + '/64')
@@ -298,48 +314,83 @@ def _configure_addresses(net, cfg):
                           cfg.cloud_address(network, site, 0x11) + '/64')
 
 
+def _core_next(net, cfg, site, target):
+    """Return the next-hop address and interface for a core route.
+
+    The core is a Beijing-centred star.  Beijing routes directly to the
+    destination C router; every other site sends remote traffic via Beijing.
+    """
+    hub = cfg.site('bj')
+    peer = target if site.abbr == hub.abbr else hub
+    return (cfg.core_neighbor(site, peer),
+            _host_intf(net.get(c_name(site)), c_name(peer)))
+
+
+def _configure_core_neighbors(net, cfg):
+    hub = cfg.site('bj')
+    for site in cfg.sites:
+        c = net.get(c_name(site))
+        if site.abbr == hub.abbr:
+            peers = [item for item in cfg.sites if item.id != site.id]
+        else:
+            peers = [hub]
+        for peer in peers:
+            intf = _host_intf(c, c_name(peer))
+            addr = cfg.core_neighbor(site, peer)
+            mac = _host_mac(net.get(c_name(peer)), c_name(site))
+            c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
+                  % (addr, mac, intf.name))
+
+
 def _configure_routers(net, cfg, macs):
     """Configure C/A underlay routes and cloud default gateways."""
     _configure_addresses(net, cfg)
+    _configure_core_neighbors(net, cfg)
     for site in cfg.sites:
-        site_other = next(item for item in cfg.sites if item.id != site.id)
         c = net.get(c_name(site))
-        c_other = net.get(c_name(site_other))
         e = e_name(site)
         c_e_intf = _host_intf(c, e)
-        c_other_intf = _host_intf(c, c_name(site_other))
         fake_e = 'fd00:0:%d:1::2' % site.id
         fake_e_mac = macs[site.abbr]['e_c']
         c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
               % (fake_e, fake_e_mac, c_e_intf.name))
-        for network in cfg.l3_networks():
+        for network in cfg.l3_networks_for_site(site):
             sid = cfg.srv6_sid(network, site)
             c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
                   % (sid, fake_e_mac, c_e_intf.name))
-        for network in cfg.l2_networks():
+        for network in cfg.l2_networks_for_site(site):
             sid = cfg.l2_sid(network, site)
             c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
                   % (sid, fake_e_mac, c_e_intf.name))
 
-        # Local site prefixes through E; remote site prefixes through C.
-        for network in cfg.l3_networks():
+        # Local L3 prefixes through the local E.
+        for network in cfg.l3_networks_for_site(site):
             local_prefix = cfg.business_network(network, site)
-            remote_prefix = cfg.business_network(network, site_other)
             c.cmd('ip -6 route replace %s via %s dev %s'
                   % (local_prefix, fake_e, c_e_intf.name))
-            if site.abbr == 'bj':
-                c_other_addr = 'fd00:0:1:0::2'
-            else:
-                c_other_addr = 'fd00:0:1:0::1'
+
+        # Remote L3 prefixes through the core.
+        for network in cfg.l3_networks_for_site(site):
+            for target in cfg.network_sites(network):
+                if target.id == site.id:
+                    continue
+                next_hop, intf = _core_next(net, cfg, site, target)
+                c.cmd('ip -6 route replace %s via %s dev %s'
+                      % (cfg.business_network(network, target),
+                         next_hop, intf.name))
+
+        # Underlay /48 routes carry remote SRv6 SIDs and L2 VXLAN endpoints.
+        remote_targets = {}
+        for network in cfg.networks_for_site(site):
+            for target in cfg.network_sites(network):
+                if target.id != site.id:
+                    remote_targets[target.id] = target
+        for target in sorted(remote_targets.values(), key=lambda item: item.id):
+            next_hop, intf = _core_next(net, cfg, site, target)
             c.cmd('ip -6 route replace %s via %s dev %s'
-                  % (remote_prefix, c_other_addr, c_other_intf.name))
+                  % (cfg.underlay_network(target), next_hop, intf.name))
 
-        # Underlay route for VXLAN outer IPv6 (L2VPN).
-        remote_underlay = 'fd00:0:%d::/48' % site_other.id
-        c.cmd('ip -6 route replace %s via %s dev %s'
-              % (remote_underlay, c_other_addr, c_other_intf.name))
-
-        for network in cfg.networks:
+        for network in cfg.networks_for_site(site):
             cloud = net.get(cloud_name(site, network))
             s1 = s1_name(site)
             intf = _host_intf(cloud, s1)
@@ -351,8 +402,7 @@ def _configure_routers(net, cfg, macs):
                 cloud.cmd('ip -6 route replace default via %s dev %s'
                           % (gateway, intf.name))
             else:
-                peer = next(item for item in cfg.sites
-                            if item.id != site.id)
+                peer = _network_peer(cfg, network, site)
                 remote_addr = cfg.cloud_address(network, peer)
                 remote_mac = _host_mac(
                     net.get(cloud_name(peer, network)), s1_name(peer))
@@ -368,7 +418,7 @@ def _site_macs(net, cfg):
             'clouds': {
                 network.id: _host_mac(net.get(cloud_name(site, network)),
                                       s1_name(site))
-                for network in cfg.networks
+                for network in cfg.networks_for_site(site)
             },
         }
         for site in cfg.sites
@@ -377,18 +427,17 @@ def _site_macs(net, cfg):
 
 def _configure_public(net, cfg):
     """Configure the C2 public exchange and static FIX routes."""
-    c_bj = net.get('C_bj')
-    c_sh = net.get('C_sh')
+    hub = cfg.site('bj')
+    c_bj = net.get(c_name(hub))
     pub = net.get('pub_border')
     fix = net.get('fix')
     c_pub = _host_intf(c_bj, 'pub_border')
-    c_sh_bj = _host_intf(c_sh, c_name(cfg.site('bj')))
-    pub_c = _host_intf(pub, 'C_bj')
+    pub_c = _host_intf(pub, c_name(hub))
     pub_fix = _host_intf(pub, 'fix')
     fix_pub = _host_intf(fix, 'pub_border')
 
     c_bj.cmd('ip -6 neigh replace 2001:255:0:100::1 lladdr %s dev %s nud permanent'
-             % (_host_mac(pub, 'C_bj'), c_pub.name))
+             % (_host_mac(pub, c_name(hub)), c_pub.name))
     pub.cmd('ip -6 neigh replace 2001:255:0:100::a806 lladdr %s dev %s nud permanent'
             % (_host_mac(c_bj, 'pub_border'), pub_c.name))
     pub.cmd('ip -6 neigh replace 2001:255:0:100::2000 lladdr %s dev %s nud permanent'
@@ -398,8 +447,14 @@ def _configure_public(net, cfg):
 
     c_bj.cmd('ip -6 route replace 2001:255:0:100::2000/128 via '
              '2001:255:0:100::1 dev %s' % c_pub.name)
-    c_sh.cmd('ip -6 route replace 2001:255:0:100::2000/128 via '
-             'fd00:0:1:0::1 dev %s' % c_sh_bj.name)
+    for site in cfg.sites:
+        if site.abbr == hub.abbr:
+            continue
+        c = net.get(c_name(site))
+        intf = _host_intf(c, c_name(hub))
+        next_hop = cfg.core_neighbor(site, hub)
+        c.cmd('ip -6 route replace 2001:255:0:100::2000/128 via '
+              '%s dev %s' % (next_hop, intf.name))
     pub.cmd('ip -6 route replace 2001:255:0:100::2000/128 dev %s'
             % pub_fix.name)
     for prefix in ('240a:a806::/32', '240a:a807::/32'):
@@ -411,7 +466,7 @@ def _configure_public(net, cfg):
 
 def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
     names = runtime_names(json_path or cfg.p4_json)
-    switch_ports = _port_maps(net)
+    switch_ports = _port_maps(net, cfg)
     macs = _site_macs(net, cfg)
 
     # First control-plane stage: build and validate the EVPN route model.

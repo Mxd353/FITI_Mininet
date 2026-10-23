@@ -90,7 +90,8 @@ requirements-p4runtime.txt  P4Runtime Python 依赖
 
 ## 并行网络仿真
 
-中关村主干网并行网络场景是独立子项目，默认只启动北京/上海两个站点。
+中关村主干网并行网络场景是独立子项目，默认启动北京/上海/广州/成都四个站点；
+L3VPN 覆盖四站点，L2VPN 当前仍只在北京/上海验证。
 详细设计见 [docs/PARALLEL_NETWORK_DESIGN.md](docs/PARALLEL_NETWORK_DESIGN.md)。
 
 ```bash
@@ -114,11 +115,15 @@ make parallel-run-no-cli
 
 - `E`/`S1`/`S2` 使用 BMv2 + P4；
 - `C`/`A`/云服务器/公网边界使用 Linux netns；
-- 网络 1/2 为 L3VPN（静态 SRv6），网络 3/4 为 L2VPN（静态 SRv6，VXLAN 可回退）；
+- 网络 1/2 为 L3VPN（四站点静态 SRv6），网络 3/4 为 L2VPN（北京/上海，静态 SRv6，VXLAN 可回退）；
+- L3VPN 核心采用北京星型拓扑：C_bj 直连 C_sh/C_gz/C_cd；
 - L2VPN 使用扁平 /64 模拟跨站点广播域；
 - L3VPN/L2VPN 使用静态 SRv6 SID；C2/FIX 使用静态公网路由；
 - EVPN 路由模型（IP Prefix、MAC/IP、IMET）已接入表项生成；真实 BGP/EVPN 协议后续接入；
 - S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN。
+
+`configs/parallel.json` 的每个网络可用 `sites` 指定成员站点；缺省表示所有
+站点。当前网络 1/2（L3VPN）为四站点，网络 3/4（L2VPN）为北京/上海两站点。
 
 ### EVPN 路由模型（第一阶段）
 
@@ -133,8 +138,8 @@ make parallel-evpn-dump
 python3 parallel_evpn.py --json /tmp/evpn-routes.json
 ```
 
-当前免 root 输出 8 条本地路由（4 条 L3 IP Prefix、4 条 L2 IMET）；
-Mininet 启动后会补充 4 条云服务器 MAC/IP 路由，共 12 条。
+当前免 root 输出 12 条本地路由（8 条 L3 IP Prefix、4 条 L2 IMET）；
+Mininet 启动后会补充 4 条云服务器 MAC/IP 路由，共 16 条。
 L3VPN 的 `l3_fib`/`local_sid` 和 L2VPN 的 SRv6 隧道/解封装已经由这些
 路由对象驱动，其余 VLAN、L2 FIB 和公网表项仍由静态控制面生成。
 
@@ -146,8 +151,32 @@ NLRI 编解码和真实 BGP 会话。
 ```text
 cloud_bj_1 ping6 -c 3 2001:255:0:100::2000
 cloud_sh_1 ping6 -c 3 2001:255:0:100::2000
+cloud_gz_1 ping6 -c 3 2001:255:0:100::2000
+cloud_cd_1 ping6 -c 3 2001:255:0:100::2000
 fix ping6 -c 3 240a:a806:1:1::10
-fix ping6 -c 3 240a:a806:2:2::10
+fix ping6 -c 3 240a:a806:1:3::10
+fix ping6 -c 3 240a:a806:2:4::10
+```
+
+四站点 L3VPN 与 L2VPN 回归：
+
+```text
+# L3VPN，网络 1：北京 -> 上海/广州/成都
+cloud_bj_1 ping6 -c 3 240a:a806:1:2::10
+cloud_bj_1 ping6 -c 3 240a:a806:1:3::10
+cloud_bj_1 ping6 -c 3 240a:a806:1:4::10
+
+# L3VPN，网络 2：成都 -> 北京/上海/广州
+cloud_cd_2 ping6 -c 3 240a:a806:2:1::10
+cloud_cd_2 ping6 -c 3 240a:a806:2:2::10
+cloud_cd_2 ping6 -c 3 240a:a806:2:3::10
+
+# L2VPN 仍为北京/上海两站点
+cloud_bj_3 ping6 -c 3 240a:a806:3:1::11
+cloud_bj_4 ping6 -c 3 240a:a806:4:1::11
+
+# 隔离：网络 1 与网络 2 应 100% 丢包
+cloud_bj_1 ping6 -c 3 240a:a806:2:3::10
 ```
 
 ## 环境要求
@@ -529,3 +558,4 @@ sudo python3 fiti_slice.py --slices configs/slices.json --pcap --pcap-dir pcap
 - 运行时新增切片不持久化，重启后只恢复 `configs/slices.json` 中的初始切片。
 - SRv6 封装增加约 40 + 8 + 16N 字节，主机 MTU 需要相应调小。
 - SRv6 无动态路由/NDP 控制协议，SID 下一跳和邻居信息由控制面静态计算。
+- L2VPN 当前只支持两个站点；多站点 L2VPN 需要 ingress replication 或 EVPN IMET 复制实现。

@@ -10,25 +10,55 @@
             "id": 2,
             "abbr": "sh",
             "name": "上海"
+        },
+        {
+            "id": 3,
+            "abbr": "gz",
+            "name": "广州"
+        },
+        {
+            "id": 4,
+            "abbr": "cd",
+            "name": "成都"
         }
     ],
     "l2_tunnel": "srv6",
     "networks": [
         {
             "id": 1,
-            "vpn": "l3"
+            "vpn": "l3",
+            "sites": [
+                "bj",
+                "sh",
+                "gz",
+                "cd"
+            ]
         },
         {
             "id": 2,
-            "vpn": "l3"
+            "vpn": "l3",
+            "sites": [
+                "bj",
+                "sh",
+                "gz",
+                "cd"
+            ]
         },
         {
             "id": 3,
-            "vpn": "l2"
+            "vpn": "l2",
+            "sites": [
+                "bj",
+                "sh"
+            ]
         },
         {
             "id": 4,
-            "vpn": "l2"
+            "vpn": "l2",
+            "sites": [
+                "bj",
+                "sh"
+            ]
         }
     ],
     "p4": {

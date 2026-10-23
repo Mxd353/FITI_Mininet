@@ -8,7 +8,7 @@ import ipaddress
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from fiti.paths import PROJECT_ROOT
 
@@ -29,6 +29,7 @@ class Network:
     id: int
     vpn: str
     vlan: int
+    sites: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -60,6 +61,20 @@ class ParallelConfig:
     def l2_networks(self) -> List[Network]:
         return [item for item in self.networks if item.vpn == 'l2']
 
+    def network_sites(self, network: Network) -> List[Site]:
+        return [self.site(abbr) for abbr in network.sites]
+
+    def networks_for_site(self, site: Site) -> List[Network]:
+        return [item for item in self.networks if site.abbr in item.sites]
+
+    def l3_networks_for_site(self, site: Site) -> List[Network]:
+        return [item for item in self.networks_for_site(site)
+                if item.vpn == 'l3']
+
+    def l2_networks_for_site(self, site: Site) -> List[Network]:
+        return [item for item in self.networks_for_site(site)
+                if item.vpn == 'l2']
+
     def business_network(self, network: Network, site: Site) -> ipaddress.IPv6Network:
         return ipaddress.IPv6Network(
             '240a:a806:%d:%d::/64' % (network.id, site.id))
@@ -82,6 +97,32 @@ class ParallelConfig:
                              site: Site) -> ipaddress.IPv6Network:
         return ipaddress.IPv6Network(
             '240a:a806:%d:%d::/64' % (network.id, 100 + site.id))
+
+    def core_network(self, left: Site,
+                     right: Site) -> ipaddress.IPv6Network:
+        """北京星型核心链路地址；当前只定义 hub-remote 直连。"""
+        hub = self.site('bj')
+        if left.abbr == hub.abbr:
+            peer = right
+        elif right.abbr == hub.abbr:
+            peer = left
+        else:
+            raise ValueError('核心采用北京星型拓扑，%s-%s 没有直连链路'
+                             % (left.abbr, right.abbr))
+        if peer.abbr == 'sh':
+            return ipaddress.IPv6Network('fd00:0:1:0::/64')
+        return ipaddress.IPv6Network('fd00:0:1:%d::/64' % peer.id)
+
+    def core_address(self, local: Site, remote: Site) -> str:
+        net = self.core_network(local, remote)
+        offset = 1 if local.abbr == 'bj' else 2
+        return str(net.network_address + offset)
+
+    def core_neighbor(self, local: Site, remote: Site) -> str:
+        return self.core_address(remote, local)
+
+    def underlay_network(self, site: Site) -> ipaddress.IPv6Network:
+        return ipaddress.IPv6Network('fd00:0:%d::/48' % site.id)
 
     def central_address(self, network: Network, site: Site) -> str:
         net = self.interconnect_network(network, site)
@@ -133,11 +174,12 @@ def _load_sites(raw) -> List[Site]:
     return sites
 
 
-def _load_networks(raw) -> List[Network]:
+def _load_networks(raw, site_abbrs) -> List[Network]:
     if not isinstance(raw, list) or not raw:
         raise ValueError('parallel.json: networks 必须是非空列表')
     networks = []
     seen = set()
+    known_sites = set(site_abbrs)
     for entry in raw:
         network_id = int(entry['id'])
         if not 1 <= network_id <= 400:
@@ -154,7 +196,22 @@ def _load_networks(raw) -> List[Network]:
             raise ValueError(
                 '网络 %s 的 VLAN 必须为 %d（ID + 3500），当前为 %d'
                 % (network_id, expected_vlan, vlan))
-        networks.append(Network(id=network_id, vpn=vpn, vlan=vlan))
+        site_list = entry.get('sites')
+        if site_list is None:
+            members = tuple(site_abbrs)
+        else:
+            if not isinstance(site_list, list) or not site_list:
+                raise ValueError('网络 %s 的 sites 必须是非空列表'
+                                 % network_id)
+            members = tuple(str(item) for item in site_list)
+            if len(set(members)) != len(members):
+                raise ValueError('网络 %s 的 sites 有重复项' % network_id)
+            unknown = [item for item in members if item not in known_sites]
+            if unknown:
+                raise ValueError('网络 %s 引用了未知站点: %s'
+                                 % (network_id, ', '.join(unknown)))
+        networks.append(Network(id=network_id, vpn=vpn, vlan=vlan,
+                                sites=members))
     return networks
 
 
@@ -163,7 +220,8 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     with open(path, encoding='utf-8') as handle:
         raw = json.load(handle)
     sites = _load_sites(raw.get('sites'))
-    networks = _load_networks(raw.get('networks'))
+    networks = _load_networks(raw.get('networks'),
+                              [item.abbr for item in sites])
     p4 = raw.get('p4', {}) or {}
     p4_json = str(p4.get('json', os.path.relpath(DEFAULT_P4_JSON,
                                                   PROJECT_ROOT)))
@@ -193,7 +251,8 @@ def dump_config(cfg: ParallelConfig) -> None:
     for network in cfg.networks:
         print('  ID=%d VLAN=%d VPN=%s'
               % (network.id, network.vlan, network.vpn))
-        for site in cfg.sites:
+        print('    站点: %s' % ', '.join(network.sites))
+        for site in cfg.network_sites(network):
             if network.vpn == 'l2':
                 subnet = cfg.l2_network(network)
             else:
