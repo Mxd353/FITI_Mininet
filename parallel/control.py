@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from fiti.p4 import switch_cli
 from parallel.config import ParallelConfig
+from parallel.evpn import build_evpn_routes, validate_evpn_routes
 from parallel.p4 import runtime_names
 from parallel.topology import (a_name, c_name, cloud_name, e_name,
                                s1_name, s2_name)
@@ -96,7 +97,7 @@ def _add_port(cmds, names, port, action, egress_action, vlan=None):
     _add(cmds, names, 'egress_port', egress_action, [port])
 
 
-def _install_switch_tables(net, cfg, names, switch_ports, macs):
+def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
     commands = {name: [] for name in SWITCH_NAMES}
 
     for site in cfg.sites:
@@ -119,33 +120,41 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs):
             _add(commands[e], names, 'vlan_map', 'map_l2',
                  [network.vlan])
 
-        # E core ingress: recover VRF from the business prefix.
-        for network in cfg.l3_networks():
-            for target in cfg.sites:
-                _add(commands[e], names, 'vrf_map', 'map_vrf',
-                     [cfg.business_network(network, target)], [network.id])
-
-        # E L3 FIB: local site -> S1, remote site -> C.
         c_port = e_ports[c]
         c_dmac = _host_mac(net.get(c), e)
-        for network in cfg.l3_networks():
-            for target in cfg.sites:
-                prefix = cfg.business_network(network, target)
-                if target.abbr == site.abbr:
-                    _add(commands[e], names, 'l3_fib', 'forward_l3',
-                         [network.id, prefix],
-                         [e_ports[s1],
-                          macs[site.abbr]['clouds'][network.id],
-                          network.vlan])
-                else:
-                    _add(commands[e], names, 'l3_fib', 'srv6_encap',
-                         [network.id, prefix],
-                         [cfg.srv6_sid(network, site),
-                          cfg.srv6_sid(network, target),
-                          c_dmac, c_port])
 
-            # Local SRv6 SID: decap and deliver to the local cloud server.
-            local_sid = cfg.srv6_sid(network, site)
+        # EVPN control-plane route objects drive the L3VPN table entries.
+        # VRF and prefix routes come from IP Prefix routes; local SIDs come
+        # from the same route objects so static and future BGP modes agree.
+        l3_routes = evpn_routes.l3_routes()
+        for route in sorted(l3_routes, key=lambda item: (item.vni, item.prefix)):
+            _add(commands[e], names, 'vrf_map', 'map_vrf',
+                 [route.prefix], [route.vni])
+
+        for route in l3_routes:
+            network = cfg.network(route.vni)
+            target = cfg.site(route.origin)
+            if target.abbr == site.abbr:
+                _add(commands[e], names, 'l3_fib', 'forward_l3',
+                     [network.id, route.prefix],
+                     [e_ports[s1],
+                      macs[site.abbr]['clouds'][network.id],
+                      network.vlan])
+            else:
+                local_route = evpn_routes.l3_route(network.id, site.abbr)
+                if local_route is None:
+                    raise RuntimeError('站点 %s 缺少网络 %d 的本地 EVPN 路由'
+                                       % (site.abbr, network.id))
+                _add(commands[e], names, 'l3_fib', 'srv6_encap',
+                     [network.id, route.prefix],
+                     [local_route.sid, route.sid, c_dmac, c_port])
+
+        for network in cfg.l3_networks():
+            local_route = evpn_routes.l3_route(network.id, site.abbr)
+            if local_route is None:
+                raise RuntimeError('站点 %s 缺少网络 %d 的本地 EVPN 路由'
+                                   % (site.abbr, network.id))
+            local_sid = local_route.sid
             _add(commands[e], names, 'local_sid', 'srv6_decap',
                  ['%s/128' % local_sid],
                  [e_ports[s1], macs[site.abbr]['clouds'][network.id],
@@ -163,18 +172,27 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs):
 
         # L2VPN: SRv6 by default; VXLAN remains available as a fallback.
         for network in cfg.l2_networks():
-            peer = next(item for item in cfg.sites
-                        if item.id != site.id)
+            local_route = evpn_routes.imet_route(network.id, site.abbr)
+            if local_route is None:
+                raise RuntimeError('站点 %s 缺少网络 %d 的 L2 EVPN 路由'
+                                   % (site.abbr, network.id))
             if cfg.l2_tunnel == 'srv6':
+                remote_routes = evpn_routes.remote_imet_routes(
+                    network.id, site.abbr)
+                if len(remote_routes) != 1:
+                    raise RuntimeError(
+                        '网络 %d 的 L2 SRv6 当前只支持两个站点，实际远端路由 %d 条'
+                        % (network.id, len(remote_routes)))
+                remote_route = remote_routes[0]
                 _add(commands[e], names, 'l2_tunnel', 'srv6_l2_encap',
                      [network.vlan],
-                     [cfg.l2_sid(network, site),
-                      cfg.l2_sid(network, peer),
-                      c_dmac, c_port])
+                     [local_route.sid, remote_route.sid, c_dmac, c_port])
                 _add(commands[e], names, 'local_sid', 'srv6_l2_decap',
-                     ['%s/128' % cfg.l2_sid(network, site)],
+                     ['%s/128' % local_route.sid],
                      [e_ports[s1]])
             else:
+                peer = next(item for item in cfg.sites
+                            if item.id != site.id)
                 src_ip = 'fd00:0:%d:1::2' % site.id
                 dst_ip = 'fd00:0:%d:1::2' % peer.id
                 _add(commands[e], names, 'l2_tunnel', 'vxlan_encap',
@@ -395,6 +413,16 @@ def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
     names = runtime_names(json_path or cfg.p4_json)
     switch_ports = _port_maps(net)
     macs = _site_macs(net, cfg)
-    _install_switch_tables(net, cfg, names, switch_ports, macs)
+
+    # First control-plane stage: build and validate the EVPN route model.
+    # The same route objects will later be fed by an FRR/ExaBGP adapter.
+    evpn_routes = build_evpn_routes(cfg, net)
+    errors = validate_evpn_routes(evpn_routes)
+    if errors:
+        raise RuntimeError('EVPN 路由校验失败: %s' % '; '.join(errors))
+    net.evpn_routes = evpn_routes
+
+    _install_switch_tables(net, cfg, names, switch_ports, macs,
+                           evpn_routes)
     _configure_routers(net, cfg, macs)
     _configure_public(net, cfg)

@@ -387,7 +387,7 @@ PDF 的目标封装是 **EVPN SRv6**，不是 VXLAN。建议分两级实现：
 
 ## 9. 控制面策略
 
-### 9.1 首期：静态表项
+### 9.1 首期：静态表项与 EVPN 路由模型
 
 Python 根据 `configs/parallel.json` 生成：
 
@@ -398,7 +398,25 @@ Python 根据 `configs/parallel.json` 生成：
 - SRv6/VXLAN 封装参数；
 - 公网前缀过滤规则。
 
-表项通过 P4Runtime 或 Thrift 下发。这种方式适合验证数据平面和隔离。
+静态表项通过 P4Runtime 或 Thrift 下发。这种方式适合验证数据平面和隔离。
+
+第一阶段还增加了 `parallel/evpn.py` 的 EVPN 路由模型：
+
+- IP Prefix 路由：L3VPN 的 RD/RT、VNI、业务前缀和本端/远端 SID；
+- MAC/IP 路由：L2VPN 云服务器 MAC、IP、VNI 和 L2 SID；
+- Inclusive Multicast 路由：L2VPN BUM 流量的站点级 SID；
+- `RouteTable` 提供 advertise/withdraw/replace 事件、JSON 导入导出和 SID 冲突校验。
+
+当前 `l3_fib`、L3 `local_sid` 以及 L2 SRv6 隧道/解封装由路由对象驱动；
+VLAN、L2 FIB 和公网表项仍由静态控制面生成。可免 root 查看：
+
+```bash
+make parallel-evpn-dump
+python3 parallel_evpn.py --json /tmp/evpn-routes.json
+```
+
+免 root 模式输出 8 条本地路由（4 条 IP Prefix + 4 条 IMET）；Mininet
+启动后增加 4 条云服务器 MAC/IP 路由，共 12 条。
 
 ### 9.2 后续：协议控制面
 
@@ -407,6 +425,11 @@ Python 根据 `configs/parallel.json` 生成：
 - EVPN：需要支持 EVPN 的控制面（FRR、BIRD 或自定义控制器）；
 - SRv6：需要 locator 分配、SID 发布和 EVPN 路由到 SID 的映射；
 - BMv2 只负责数据平面，不能单独完成 EVPN/BGP 控制面。
+
+推荐接入顺序：先用 `RouteTable` 作为 FRR/ExaBGP 与 P4 表项之间的适配层，
+在北京/上海两个站点验证路由增删/撤销；再扩到 4～6 个站点测量表容量和
+BMv2 资源；最后批量生成 41 个站点配置。当前路由模型不包含 BGP FSM、
+Route Reflector 和 EVPN NLRI 编解码。
 
 ## 10. 实施阶段
 
@@ -446,9 +469,10 @@ Python 根据 `configs/parallel.json` 生成：
 
 ### 阶段 5：EVPN/SRv6 控制面
 
-- 引入 EVPN 路由；
+- 引入 EVPN 路由模型（已完成第一阶段）；
 - 引入 SRv6 locator/SID；
 - 验证控制面安装结果与静态表项一致；
+- 接入 FRR/ExaBGP，验证 BGP EVPN 会话和路由撤销；
 - 评估是否需要外部控制器。
 
 ## 11. 测试计划

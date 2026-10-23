@@ -13,6 +13,7 @@ PARALLEL_P4INFO  = build/parallel_vpn.p4info.txt
         traffic traffic-base traffic-global \
         traffic-continuous traffic-base-continuous traffic-global-continuous \
         check check-srv6 dump clean parallel-p4 parallel-dump parallel-run \
+        parallel-evpn-dump test-evpn \
         parallel-run-no-cli
 
 all: p4
@@ -103,6 +104,12 @@ parallel-p4:
 
 parallel-dump:
 	python3 parallel_net.py --dump
+
+parallel-evpn-dump:
+	python3 parallel_evpn.py --dump --validate
+
+test-evpn:
+	python3 -m unittest tests.test_evpn
 
 parallel-run: parallel-p4
 	sudo python3 parallel_net.py

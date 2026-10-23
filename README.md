@@ -72,10 +72,12 @@ parallel/                   并行网络仿真子项目
 ├── config.py               网络 ID、VLAN、IPv6 规划
 ├── topology.py             C/E/A/S1/S2/云服务器拓扑
 ├── switch.py               BMv2 交换机封装
+├── evpn.py                 EVPN 路由模型与 SID/VNI 分配
 ├── control.py              静态 L3VPN/L2VPN 表项下发
 └── runtime.py              Mininet 构建与启动
 
 parallel_net.py             并行网络 CLI
+parallel_evpn.py            EVPN 路由模型 CLI
 p4src/parallel_vpn.p4       VLAN + L2 + L3VPN 数据平面
 p4src/fiti_slice.p4         VLAN L2 + 多段 SRv6 P4 程序
 fiti_topo.py                基础拓扑 CLI 兼容入口
@@ -95,6 +97,9 @@ requirements-p4runtime.txt  P4Runtime Python 依赖
 # 免 root 查看拓扑和地址规划
 make parallel-dump
 
+# 免 root 查看 EVPN 路由模型
+make parallel-evpn-dump
+
 # 编译并行网络 P4
 make parallel-p4
 
@@ -111,8 +116,30 @@ make parallel-run-no-cli
 - `C`/`A`/云服务器/公网边界使用 Linux netns；
 - 网络 1/2 为 L3VPN（静态 SRv6），网络 3/4 为 L2VPN（静态 SRv6，VXLAN 可回退）；
 - L2VPN 使用扁平 /64 模拟跨站点广播域；
-- L3VPN/L2VPN 使用静态 SRv6 SID；C2/FIX 使用静态公网路由；EVPN/BGP 控制面后续实现；
+- L3VPN/L2VPN 使用静态 SRv6 SID；C2/FIX 使用静态公网路由；
+- EVPN 路由模型（IP Prefix、MAC/IP、IMET）已接入表项生成；真实 BGP/EVPN 协议后续接入；
 - S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN。
+
+### EVPN 路由模型（第一阶段）
+
+`parallel/evpn.py` 生成 EVPN 路由对象，并通过 `RouteTable` 提供
+advertise/withdraw 事件，供后续 FRR/ExaBGP 适配器接入：
+
+```bash
+# 本地路由模型（无 netns 时只有 L3 Prefix + L2 IMET）
+make parallel-evpn-dump
+
+# 导出 JSON，供控制面适配器或测试使用
+python3 parallel_evpn.py --json /tmp/evpn-routes.json
+```
+
+当前免 root 输出 8 条本地路由（4 条 L3 IP Prefix、4 条 L2 IMET）；
+Mininet 启动后会补充 4 条云服务器 MAC/IP 路由，共 12 条。
+L3VPN 的 `l3_fib`/`local_sid` 和 L2VPN 的 SRv6 隧道/解封装已经由这些
+路由对象驱动，其余 VLAN、L2 FIB 和公网表项仍由静态控制面生成。
+
+这是路由模型，不是 BGP 有限状态机；尚未实现 Route Reflector、EVPN
+NLRI 编解码和真实 BGP 会话。
 
 公网接入验证：
 
