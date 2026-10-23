@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Static control plane for the phase-1 parallel-network scenario.
+"""Static control plane for the parallel-network scenario.
 
-The first implementation intentionally installs static table entries.  It is
-the data-plane equivalent of the EVPN/SRv6 routes in the PDF; it is not a
-BGP/EVPN control-plane implementation.
+It installs the data-plane equivalent of the PDF's EVPN/SRv6 routes:
+L3VPN uses static SRv6 SIDs, L2VPN uses VXLAN, and public access uses
+static FIX routes.  It is not a BGP/EVPN control-plane implementation.
 """
 
 from __future__ import annotations
@@ -132,15 +132,24 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs):
             for target in cfg.sites:
                 prefix = cfg.business_network(network, target)
                 if target.abbr == site.abbr:
-                    out_port = e_ports[s1]
-                    dmac = macs[site.abbr]['clouds'][network.id]
-                    out_vlan = network.vlan
+                    _add(commands[e], names, 'l3_fib', 'forward_l3',
+                         [network.id, prefix],
+                         [e_ports[s1],
+                          macs[site.abbr]['clouds'][network.id],
+                          network.vlan])
                 else:
-                    out_port = c_port
-                    dmac = c_dmac
-                    out_vlan = 0
-                _add(commands[e], names, 'l3_fib', 'forward_l3',
-                     [network.id, prefix], [out_port, dmac, out_vlan])
+                    _add(commands[e], names, 'l3_fib', 'srv6_encap',
+                         [network.id, prefix],
+                         [cfg.srv6_sid(network, site),
+                          cfg.srv6_sid(network, target),
+                          c_dmac, c_port])
+
+            # Local SRv6 SID: decap and deliver to the local cloud server.
+            local_sid = cfg.srv6_sid(network, site)
+            _add(commands[e], names, 'local_sid', 'srv6_decap',
+                 [local_sid],
+                 [e_ports[s1], macs[site.abbr]['clouds'][network.id],
+                  network.vlan])
 
             # The Linux core routers use underlay source addresses.  Replies
             # from cloud servers therefore have an underlay destination and
@@ -275,6 +284,10 @@ def _configure_routers(net, cfg, macs):
         fake_e_mac = macs[site.abbr]['e_c']
         c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
               % (fake_e, fake_e_mac, c_e_intf.name))
+        for network in cfg.l3_networks():
+            sid = cfg.srv6_sid(network, site)
+            c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
+                  % (sid, fake_e_mac, c_e_intf.name))
 
         # Local site prefixes through E; remote site prefixes through C.
         for network in cfg.l3_networks():

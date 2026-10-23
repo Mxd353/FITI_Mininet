@@ -109,9 +109,9 @@ make parallel-run-no-cli
 
 - `E`/`S1`/`S2` 使用 BMv2 + P4；
 - `C`/`A`/云服务器/公网边界使用 Linux netns；
-- 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN（VXLAN 过渡）；
+- 网络 1/2 为 L3VPN（静态 SRv6），网络 3/4 为 L2VPN（VXLAN 过渡）；
 - L2VPN 使用扁平 /64 模拟跨站点广播域；
-- L3VPN、L2VPN 和 C2/FIX 公网接入均使用静态表项验证；EVPN/SRv6 控制面后续实现；
+- L3VPN 使用静态 SRv6 SID；L2VPN 使用 VXLAN 过渡；C2/FIX 使用静态公网路由；EVPN/BGP 控制面后续实现；
 - S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN。
 
 公网接入验证：

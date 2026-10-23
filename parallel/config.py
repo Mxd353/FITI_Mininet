@@ -67,6 +67,11 @@ class ParallelConfig:
         """L2VPN uses one flat /64 so both sites share a broadcast domain."""
         return ipaddress.IPv6Network('240a:a806:%d:1::/64' % network.id)
 
+    def srv6_sid(self, network: Network, site: Site) -> str:
+        """Per-site, per-network SRv6 SID used by the static L3VPN PE."""
+        return str(ipaddress.IPv6Address(
+            'fd00:0:%d:1::%x' % (site.id, 0x100 + network.id)))
+
     def interconnect_network(self, network: Network,
                              site: Site) -> ipaddress.IPv6Network:
         return ipaddress.IPv6Network(
