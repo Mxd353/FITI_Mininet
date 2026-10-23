@@ -39,6 +39,7 @@ class ParallelConfig:
     p4_json: str
     thrift_base: int
     p4_log_level: str
+    l2_tunnel: str = 'srv6'
     underlay: Dict[str, str] = field(default_factory=dict)
 
     def site(self, abbr: str) -> Site:
@@ -71,6 +72,11 @@ class ParallelConfig:
         """Per-site, per-network SRv6 SID used by the static L3VPN PE."""
         return str(ipaddress.IPv6Address(
             'fd00:0:%d:1::%x' % (site.id, 0x100 + network.id)))
+
+    def l2_sid(self, network: Network, site: Site) -> str:
+        """Per-site, per-network SRv6 SID used by L2VPN."""
+        return str(ipaddress.IPv6Address(
+            'fd00:0:%d:1::%x' % (site.id, 0x200 + network.id)))
 
     def interconnect_network(self, network: Network,
                              site: Site) -> ipaddress.IPv6Network:
@@ -163,6 +169,9 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
                                                   PROJECT_ROOT)))
     if not os.path.isabs(p4_json):
         p4_json = os.path.join(PROJECT_ROOT, p4_json)
+    l2_tunnel = str(raw.get('l2_tunnel', 'srv6')).lower()
+    if l2_tunnel not in ('srv6', 'vxlan'):
+        raise ValueError('l2_tunnel 必须是 srv6/vxlan: %s' % l2_tunnel)
     return ParallelConfig(
         path=path,
         sites=sites,
@@ -170,6 +179,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         p4_json=os.path.abspath(p4_json),
         thrift_base=int(p4.get('thrift_base', 11000)),
         p4_log_level=str(p4.get('log_level', 'info')),
+        l2_tunnel=l2_tunnel,
         underlay=dict(raw.get('underlay', {}) or {}),
     )
 
@@ -178,6 +188,7 @@ def dump_config(cfg: ParallelConfig) -> None:
     print('配置: %s' % cfg.path)
     print('站点: %s' % ', '.join(
         '%s(%s)' % (item.name, item.abbr) for item in cfg.sites))
+    print('L2 隧道: %s' % cfg.l2_tunnel)
     print('并行网络:')
     for network in cfg.networks:
         print('  ID=%d VLAN=%d VPN=%s'

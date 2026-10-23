@@ -11,8 +11,8 @@
  *   - S1/S2 上行 VLAN 过滤（S2 拒绝并行网络 VLAN）。
  *
  * L3VPN 使用静态 SRv6 SID 做 H.Encaps / End.DT6 等价解封装；
- * L2VPN 使用 VXLAN 作为 EVPN/SRv6 之前的过渡隧道；
- * EVPN/BGP 控制面后续加入。
+ * L2VPN 使用静态 SRv6 SID 做 H.Encaps / End.DT2 等价解封装；
+ * VXLAN 保留为 L2VPN 回退模式；EVPN/BGP 控制面后续加入。
  */
 
 #include <core.p4>
@@ -25,6 +25,7 @@ const bit<12> PARALLEL_VLAN_MIN = 3501;
 const bit<12> PARALLEL_VLAN_MAX = 3900;
 const bit<8>  IPPROTO_SRH = 43;
 const bit<8>  IPPROTO_IPV6 = 41;
+const bit<8>  IPPROTO_ETHERNET = 143;
 const bit<8>  SRH_ROUTING_TYPE = 4;
 const bit<8>  IPPROTO_UDP = 17;
 const bit<16> UDP_VXLAN = 4789;
@@ -139,6 +140,7 @@ parser ParserImpl(packet_in packet,
         packet.extract(hdr.segment0);
         transition select(hdr.srh.nextHdr) {
             IPPROTO_IPV6: parse_inner_ipv6;
+            IPPROTO_ETHERNET: parse_inner_ethernet;
             default: accept;
         }
     }
@@ -153,6 +155,10 @@ parser ParserImpl(packet_in packet,
 
     state parse_vxlan {
         packet.extract(hdr.vxlan);
+        transition parse_inner_ethernet;
+    }
+
+    state parse_inner_ethernet {
         packet.extract(hdr.inner_ethernet);
         transition select(hdr.inner_ethernet.etherType) {
             ETHERTYPE_VLAN: parse_inner_vlan;
@@ -376,12 +382,101 @@ control IngressImpl(inout headers_t hdr,
         standard_metadata.egress_spec = port;
     }
 
+    action srv6_l2_encap(bit<128> src_sid, bit<128> dst_sid,
+                         bit<48> dmac, bit<9> port) {
+        bit<16> overhead = 78;
+        hdr.inner_ethernet.setValid();
+        hdr.inner_ethernet.dstAddr = hdr.ethernet.dstAddr;
+        hdr.inner_ethernet.srcAddr = hdr.ethernet.srcAddr;
+        hdr.inner_ethernet.etherType = hdr.ethernet.etherType;
+        if (hdr.vlan.isValid()) {
+            hdr.inner_vlan.setValid();
+            hdr.inner_vlan.pcp = hdr.vlan.pcp;
+            hdr.inner_vlan.dei = hdr.vlan.dei;
+            hdr.inner_vlan.vid = hdr.vlan.vid;
+            hdr.inner_vlan.etherType = hdr.vlan.etherType;
+            overhead = 82;
+        } else {
+            hdr.inner_vlan.setInvalid();
+        }
+        hdr.inner_ipv6.setValid();
+        hdr.inner_ipv6.version = hdr.ipv6.version;
+        hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
+        hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
+        hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
+        hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
+        hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
+        hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
+        hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+
+        hdr.ipv6.version = 6;
+        hdr.ipv6.trafficClass = 0;
+        hdr.ipv6.flowLabel = 0;
+        hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
+        hdr.ipv6.nextHdr = IPPROTO_SRH;
+        hdr.ipv6.hopLimit = 64;
+        hdr.ipv6.srcAddr = src_sid;
+        hdr.ipv6.dstAddr = dst_sid;
+
+        hdr.srh.setValid();
+        hdr.srh.nextHdr = IPPROTO_ETHERNET;
+        hdr.srh.hdrExtLen = 2;
+        hdr.srh.routingType = SRH_ROUTING_TYPE;
+        hdr.srh.segmentsLeft = 0;
+        hdr.srh.lastEntry = 0;
+        hdr.srh.flags = 0;
+        hdr.srh.tag = 0;
+        hdr.segment0.setValid();
+        hdr.segment0.sid = dst_sid;
+
+        hdr.vlan.setInvalid();
+        hdr.ethernet.dstAddr = dmac;
+        hdr.ethernet.etherType = ETHERTYPE_IPV6;
+        standard_metadata.egress_spec = port;
+    }
+
+    action srv6_l2_decap(bit<9> port) {
+        hdr.ethernet.dstAddr = hdr.inner_ethernet.dstAddr;
+        hdr.ethernet.srcAddr = hdr.inner_ethernet.srcAddr;
+        hdr.ethernet.etherType = hdr.inner_ethernet.etherType;
+        if (hdr.inner_vlan.isValid()) {
+            hdr.vlan.setValid();
+            hdr.vlan.pcp = hdr.inner_vlan.pcp;
+            hdr.vlan.dei = hdr.inner_vlan.dei;
+            hdr.vlan.vid = hdr.inner_vlan.vid;
+            hdr.vlan.etherType = hdr.inner_vlan.etherType;
+        } else {
+            hdr.vlan.setInvalid();
+        }
+        if (hdr.inner_ipv6.isValid()) {
+            hdr.ipv6.version = hdr.inner_ipv6.version;
+            hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
+            hdr.ipv6.flowLabel = hdr.inner_ipv6.flowLabel;
+            hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen;
+            hdr.ipv6.nextHdr = hdr.inner_ipv6.nextHdr;
+            hdr.ipv6.hopLimit = hdr.inner_ipv6.hopLimit;
+            hdr.ipv6.srcAddr = hdr.inner_ipv6.srcAddr;
+            hdr.ipv6.dstAddr = hdr.inner_ipv6.dstAddr;
+        } else {
+            hdr.ipv6.setInvalid();
+        }
+        hdr.srh.setInvalid();
+        hdr.segment0.setInvalid();
+        hdr.udp.setInvalid();
+        hdr.vxlan.setInvalid();
+        hdr.inner_ethernet.setInvalid();
+        hdr.inner_vlan.setInvalid();
+        hdr.inner_ipv6.setInvalid();
+        standard_metadata.egress_spec = port;
+    }
+
     table local_sid {
         key = {
             hdr.ipv6.dstAddr: lpm;
         }
         actions = {
             srv6_decap;
+            srv6_l2_decap;
             drop;
         }
         size = 4096;
@@ -501,6 +596,7 @@ control IngressImpl(inout headers_t hdr,
         }
         actions = {
             vxlan_encap;
+            srv6_l2_encap;
             l2_tunnel_nop;
         }
         size = 4096;

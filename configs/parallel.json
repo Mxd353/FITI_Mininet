@@ -12,6 +12,7 @@
             "name": "上海"
         }
     ],
+    "l2_tunnel": "srv6",
     "networks": [
         {
             "id": 1,

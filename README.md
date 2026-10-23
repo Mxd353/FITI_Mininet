@@ -109,9 +109,9 @@ make parallel-run-no-cli
 
 - `E`/`S1`/`S2` 使用 BMv2 + P4；
 - `C`/`A`/云服务器/公网边界使用 Linux netns；
-- 网络 1/2 为 L3VPN（静态 SRv6），网络 3/4 为 L2VPN（VXLAN 过渡）；
+- 网络 1/2 为 L3VPN（静态 SRv6），网络 3/4 为 L2VPN（静态 SRv6，VXLAN 可回退）；
 - L2VPN 使用扁平 /64 模拟跨站点广播域；
-- L3VPN 使用静态 SRv6 SID；L2VPN 使用 VXLAN 过渡；C2/FIX 使用静态公网路由；EVPN/BGP 控制面后续实现；
+- L3VPN/L2VPN 使用静态 SRv6 SID；C2/FIX 使用静态公网路由；EVPN/BGP 控制面后续实现；
 - S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN。
 
 公网接入验证：
@@ -300,6 +300,7 @@ with fiti_network() as net:          # 自动清理
 | `srv6.decap_table`         | 静态主机 overlay 解封装路由表，默认 100                  |
 | `p4runtime`                | `thrift_base` / `grpc_base`                              |
 | `control.socket`           | 运行时 Unix socket 路径                                  |
+| `l2_tunnel`                | L2VPN 隧道：`srv6`（默认）或 `vxlan`                     |
 | `nodes[].enabled`          | 节点是否启动；默认 `true`，`false` 时跳过交换机和主机    |
 | `slices[].id`              | 切片标识，也是主机名前缀                                 |
 | `slices[].vlan` / `subnet` | 可选，需全局唯一                                         |

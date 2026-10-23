@@ -3,8 +3,8 @@
 """Static control plane for the parallel-network scenario.
 
 It installs the data-plane equivalent of the PDF's EVPN/SRv6 routes:
-L3VPN uses static SRv6 SIDs, L2VPN uses VXLAN, and public access uses
-static FIX routes.  It is not a BGP/EVPN control-plane implementation.
+L3VPN/L2VPN use static SRv6 SIDs (L2VPN can fall back to VXLAN),
+and public access uses static FIX routes.  It is not a BGP/EVPN control-plane implementation.
 """
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs):
             # Local SRv6 SID: decap and deliver to the local cloud server.
             local_sid = cfg.srv6_sid(network, site)
             _add(commands[e], names, 'local_sid', 'srv6_decap',
-                 [local_sid],
+                 ['%s/128' % local_sid],
                  [e_ports[s1], macs[site.abbr]['clouds'][network.id],
                   network.vlan])
 
@@ -161,17 +161,27 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs):
                  [network.id, '2001:255:0:100::/64'],
                  [c_port, c_dmac, 0])
 
-        # L2VPN: all frames in the VLAN are VXLAN-encapsulated to the peer E.
+        # L2VPN: SRv6 by default; VXLAN remains available as a fallback.
         for network in cfg.l2_networks():
             peer = next(item for item in cfg.sites
                         if item.id != site.id)
-            src_ip = 'fd00:0:%d:1::2' % site.id
-            dst_ip = 'fd00:0:%d:1::2' % peer.id
-            _add(commands[e], names, 'l2_tunnel', 'vxlan_encap',
-                 [network.vlan], [src_ip, dst_ip, c_dmac, c_port,
-                                  network.id])
-            _add(commands[e], names, 'vxlan_map', 'vxlan_decap',
-                 [network.id], [e_ports[s1]])
+            if cfg.l2_tunnel == 'srv6':
+                _add(commands[e], names, 'l2_tunnel', 'srv6_l2_encap',
+                     [network.vlan],
+                     [cfg.l2_sid(network, site),
+                      cfg.l2_sid(network, peer),
+                      c_dmac, c_port])
+                _add(commands[e], names, 'local_sid', 'srv6_l2_decap',
+                     ['%s/128' % cfg.l2_sid(network, site)],
+                     [e_ports[s1]])
+            else:
+                src_ip = 'fd00:0:%d:1::2' % site.id
+                dst_ip = 'fd00:0:%d:1::2' % peer.id
+                _add(commands[e], names, 'l2_tunnel', 'vxlan_encap',
+                     [network.vlan], [src_ip, dst_ip, c_dmac, c_port,
+                                      network.id])
+                _add(commands[e], names, 'vxlan_map', 'vxlan_decap',
+                     [network.id], [e_ports[s1]])
 
         # S1: E-facing trunk, cloud access ports; parallel VLANs allowed.
         _add_port(commands[s1], names, s1_ports[e], 'set_trunk', 'set_trunk')
@@ -286,6 +296,10 @@ def _configure_routers(net, cfg, macs):
               % (fake_e, fake_e_mac, c_e_intf.name))
         for network in cfg.l3_networks():
             sid = cfg.srv6_sid(network, site)
+            c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
+                  % (sid, fake_e_mac, c_e_intf.name))
+        for network in cfg.l2_networks():
+            sid = cfg.l2_sid(network, site)
             c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
                   % (sid, fake_e_mac, c_e_intf.name))
 
