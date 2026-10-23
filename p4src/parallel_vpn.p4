@@ -103,6 +103,7 @@ struct metadata_t {
     bit<1>  port_ok;
     bit<1>  core_port;
     bit<1>  l2_mode;
+    bit<1>  l2_bum;
 }
 
 parser ParserImpl(packet_in packet,
@@ -409,10 +410,14 @@ control IngressImpl(inout headers_t hdr,
         hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
         hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
 
+        hdr.ipv6.setValid();
         hdr.ipv6.version = 6;
         hdr.ipv6.trafficClass = 0;
         hdr.ipv6.flowLabel = 0;
-        hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
+        hdr.ipv6.payloadLen = overhead;
+        if (hdr.inner_ipv6.isValid()) {
+            hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
+        }
         hdr.ipv6.nextHdr = IPPROTO_SRH;
         hdr.ipv6.hopLimit = 64;
         hdr.ipv6.srcAddr = src_sid;
@@ -487,6 +492,9 @@ control IngressImpl(inout headers_t hdr,
         standard_metadata.egress_spec = port;
     }
 
+    action l2_fib_nop() {
+    }
+
     table l2_fib {
         key = {
             meta.vlan_id:        exact;
@@ -494,10 +502,11 @@ control IngressImpl(inout headers_t hdr,
         }
         actions = {
             forward_l2;
+            l2_fib_nop;
             drop;
         }
         size = 65536;
-        default_action = drop;
+        default_action = l2_fib_nop;
     }
 
     action vxlan_encap(bit<128> src, bit<128> dst, bit<48> dmac,
@@ -590,16 +599,35 @@ control IngressImpl(inout headers_t hdr,
     action l2_tunnel_nop() {
     }
 
+    action set_l2_bum(bit<16> group) {
+        standard_metadata.mcast_grp = group;
+        meta.l2_bum = 1;
+    }
+
     table l2_tunnel {
         key = {
-            meta.vlan_id: exact;
+            meta.vlan_id:        exact;
+            hdr.ethernet.dstAddr: exact;
         }
         actions = {
             vxlan_encap;
             srv6_l2_encap;
             l2_tunnel_nop;
         }
-        size = 4096;
+        size = 65536;
+        default_action = l2_tunnel_nop;
+    }
+
+    table l2_bum {
+        key = {
+            meta.vlan_id:                 exact;
+            standard_metadata.ingress_port: exact;
+        }
+        actions = {
+            set_l2_bum;
+            l2_tunnel_nop;
+        }
+        size = 1024;
         default_action = l2_tunnel_nop;
     }
 
@@ -643,6 +671,8 @@ control IngressImpl(inout headers_t hdr,
         meta.port_ok = 0;
         meta.core_port = 0;
         meta.l2_mode = 0;
+        meta.l2_bum = 0;
+        meta.ingress_port = standard_metadata.ingress_port;
 
         port_cfg.apply();
         if (meta.port_ok == 1) {
@@ -669,13 +699,20 @@ control IngressImpl(inout headers_t hdr,
                         l3_fib.apply();
                     }
                 } else if (meta.l2_mode == 1) {
-                    // E routers encap L2VPN VLANs; S1/S2 fall through to
-                    // their local MAC table because l2_tunnel defaults to nop.
+                    // Known unicast on E matches (VLAN, dst MAC); S1/S2
+                    // fall through to l2_fib.  BUM/unknown traffic then
+                    // uses a per-ingress multicast group.
                     l2_tunnel.apply();
-                    if (standard_metadata.egress_spec == 0) {
+                    if (standard_metadata.egress_spec == 0 &&
+                        standard_metadata.mcast_grp == 0) {
                         l2_fib.apply();
                     }
-                    if (standard_metadata.egress_spec != 0) {
+                    if (standard_metadata.egress_spec == 0 &&
+                        standard_metadata.mcast_grp == 0) {
+                        l2_bum.apply();
+                    }
+                    if (standard_metadata.egress_spec != 0 ||
+                        standard_metadata.mcast_grp != 0) {
                         uplink_filter.apply();
                     }
                 }
@@ -687,6 +724,82 @@ control IngressImpl(inout headers_t hdr,
 control EgressImpl(inout headers_t hdr,
                    inout metadata_t meta,
                    inout standard_metadata_t standard_metadata) {
+    action srv6_l2_encap_egress(bit<128> src_sid, bit<128> dst_sid,
+                                bit<48> dmac) {
+        bit<16> overhead = 78;
+        hdr.inner_ethernet.setValid();
+        hdr.inner_ethernet.dstAddr = hdr.ethernet.dstAddr;
+        hdr.inner_ethernet.srcAddr = hdr.ethernet.srcAddr;
+        hdr.inner_ethernet.etherType = hdr.ethernet.etherType;
+        if (hdr.vlan.isValid()) {
+            hdr.inner_vlan.setValid();
+            hdr.inner_vlan.pcp = hdr.vlan.pcp;
+            hdr.inner_vlan.dei = hdr.vlan.dei;
+            hdr.inner_vlan.vid = hdr.vlan.vid;
+            hdr.inner_vlan.etherType = hdr.vlan.etherType;
+            overhead = 82;
+        } else {
+            hdr.inner_vlan.setInvalid();
+        }
+        if (hdr.ipv6.isValid()) {
+            hdr.inner_ipv6.setValid();
+            hdr.inner_ipv6.version = hdr.ipv6.version;
+            hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
+            hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
+            hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
+            hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
+            hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
+            hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
+            hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        } else {
+            hdr.inner_ipv6.setInvalid();
+        }
+
+        hdr.ipv6.setValid();
+        hdr.ipv6.version = 6;
+        hdr.ipv6.trafficClass = 0;
+        hdr.ipv6.flowLabel = 0;
+        hdr.ipv6.payloadLen = overhead;
+        if (hdr.inner_ipv6.isValid()) {
+            hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
+        }
+        hdr.ipv6.nextHdr = IPPROTO_SRH;
+        hdr.ipv6.hopLimit = 64;
+        hdr.ipv6.srcAddr = src_sid;
+        hdr.ipv6.dstAddr = dst_sid;
+
+        hdr.srh.setValid();
+        hdr.srh.nextHdr = IPPROTO_ETHERNET;
+        hdr.srh.hdrExtLen = 2;
+        hdr.srh.routingType = SRH_ROUTING_TYPE;
+        hdr.srh.segmentsLeft = 0;
+        hdr.srh.lastEntry = 0;
+        hdr.srh.flags = 0;
+        hdr.srh.tag = 0;
+        hdr.segment0.setValid();
+        hdr.segment0.sid = dst_sid;
+
+        hdr.vlan.setInvalid();
+        hdr.ethernet.dstAddr = dmac;
+        hdr.ethernet.etherType = ETHERTYPE_IPV6;
+    }
+
+    action l2_rep_nop() {
+    }
+
+    table l2_rep_sid {
+        key = {
+            meta.vlan_id:              exact;
+            standard_metadata.egress_rid: exact;
+        }
+        actions = {
+            srv6_l2_encap_egress;
+            l2_rep_nop;
+        }
+        size = 4096;
+        default_action = l2_rep_nop;
+    }
+
     action set_access() {
         if (hdr.vlan.isValid()) {
             hdr.ethernet.etherType = hdr.vlan.etherType;
@@ -723,6 +836,9 @@ control EgressImpl(inout headers_t hdr,
     }
 
     apply {
+        if (meta.l2_bum == 1) {
+            l2_rep_sid.apply();
+        }
         egress_port.apply();
         if (meta.ingress_port == standard_metadata.egress_port) {
             mark_to_drop(standard_metadata);

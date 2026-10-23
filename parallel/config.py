@@ -137,7 +137,9 @@ class ParallelConfig:
         if network.vpn == 'l2':
             net = self.l2_network(network)
             if offset is None:
-                offset = 0x10 if site.id == 1 else 0x11
+                # Keep the original bj ::10 / sh ::11 addresses, and give
+                # additional flat-/64 sites unique offsets (gz ::12, cd ::13).
+                offset = 0x10 + max(0, site.id - 1)
         else:
             net = self.business_network(network, site)
             if offset is None:

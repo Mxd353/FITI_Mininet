@@ -10,7 +10,7 @@ and public access uses static FIX routes.  It is not a BGP/EVPN control-plane im
 from __future__ import annotations
 
 
-from fiti.p4 import switch_cli
+from fiti.p4 import _mc_handles, switch_cli
 from parallel.config import ParallelConfig
 from parallel.evpn import build_evpn_routes, validate_evpn_routes
 from parallel.p4 import runtime_names
@@ -58,15 +58,6 @@ def _host_mac(host, peer_name):
     return _host_intf(host, peer_name).MAC()
 
 
-def _network_peer(cfg, network, site):
-    peers = [item for item in cfg.network_sites(network)
-             if item.id != site.id]
-    if len(peers) != 1:
-        raise RuntimeError('网络 %d 当前只支持两个站点，%s 的远端站点数为 %d'
-                           % (network.id, site.abbr, len(peers)))
-    return peers[0]
-
-
 def _switch_mac(net, switch_name_, peer_name):
     switch = net.get(switch_name_)
     for intf in switch.intfs.values():
@@ -108,8 +99,27 @@ def _add_port(cmds, names, port, action, egress_action, vlan=None):
     _add(cmds, names, 'egress_port', egress_action, [port])
 
 
+def _add_mc_group(commands, groups, group_id, nodes):
+    """Append multicast group/node creation commands for one switch.
+
+    ``nodes`` is a list of ``(replication_id, ports)``.  Multiple nodes may
+    share the same physical port; bmv2 exposes the node replication id to
+    the egress pipeline, which is how L2 BUM copies select remote SIDs.
+    """
+    nodes = [(int(rid), [int(port) for port in ports])
+             for rid, ports in nodes if ports]
+    if not nodes:
+        return
+    commands.append('mc_mgrp_create %d' % int(group_id))
+    for rid, ports in nodes:
+        commands.append('mc_node_create %d %s'
+                        % (rid, ' '.join(str(port) for port in ports)))
+    groups.append((int(group_id), len(nodes)))
+
+
 def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
     commands = {name: [] for name in _switch_names(cfg)}
+    groups = {name: [] for name in commands}
 
     for site in cfg.sites:
         e = e_name(site)
@@ -186,32 +196,56 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                  [c_port, c_dmac, 0])
 
         # L2VPN: SRv6 by default; VXLAN remains available as a fallback.
+        # Known unicast is keyed by remote cloud MAC.  BUM traffic uses a
+        # per-ingress multicast group; E ingress replicates to one node per
+        # remote site, and the egress pipeline maps egress_rid to a SID.
         for network in cfg.l2_networks_for_site(site):
             local_route = evpn_routes.imet_route(network.id, site.abbr)
             if local_route is None:
                 raise RuntimeError('站点 %s 缺少网络 %d 的 L2 EVPN 路由'
                                    % (site.abbr, network.id))
+            remote_mac_routes = [
+                (cfg.site(route.origin), route)
+                for route in evpn_routes.mac_ip_routes(network.id)
+                if route.origin != site.abbr
+            ]
+            remote_mac_routes.sort(key=lambda item: item[0].id)
+
             if cfg.l2_tunnel == 'srv6':
-                remote_routes = evpn_routes.remote_imet_routes(
-                    network.id, site.abbr)
-                if len(remote_routes) != 1:
-                    raise RuntimeError(
-                        '网络 %d 的 L2 SRv6 当前只支持两个站点，实际远端路由 %d 条'
-                        % (network.id, len(remote_routes)))
-                remote_route = remote_routes[0]
-                _add(commands[e], names, 'l2_tunnel', 'srv6_l2_encap',
-                     [network.vlan],
-                     [local_route.sid, remote_route.sid, c_dmac, c_port])
                 _add(commands[e], names, 'local_sid', 'srv6_l2_decap',
-                     ['%s/128' % local_route.sid],
-                     [e_ports[s1]])
+                     ['%s/128' % local_route.sid], [e_ports[s1]])
+                for remote_site, mac_route in remote_mac_routes:
+                    remote_route = evpn_routes.imet_route(
+                        network.id, remote_site.abbr)
+                    if remote_route is None:
+                        raise RuntimeError(
+                            '站点 %s 缺少网络 %d 的远端 L2 路由'
+                            % (remote_site.abbr, network.id))
+                    _add(commands[e], names, 'l2_tunnel', 'srv6_l2_encap',
+                         [network.vlan, mac_route.mac],
+                         [local_route.sid, remote_route.sid,
+                          c_dmac, c_port])
+
+                group_id = network.vlan * 2
+                nodes = [(remote_site.id, [c_port])
+                         for remote_site, _ in remote_mac_routes]
+                _add_mc_group(commands[e], groups[e], group_id, nodes)
+                _add(commands[e], names, 'l2_bum', 'set_l2_bum',
+                     [network.vlan, e_ports[s1]], [group_id])
+                for remote_site, _ in remote_mac_routes:
+                    remote_route = evpn_routes.imet_route(
+                        network.id, remote_site.abbr)
+                    _add(commands[e], names, 'l2_rep_sid',
+                         'srv6_l2_encap_egress',
+                         [network.vlan, remote_site.id],
+                         [local_route.sid, remote_route.sid, c_dmac])
             else:
-                peer = _network_peer(cfg, network, site)
                 src_ip = 'fd00:0:%d:1::2' % site.id
-                dst_ip = 'fd00:0:%d:1::2' % peer.id
-                _add(commands[e], names, 'l2_tunnel', 'vxlan_encap',
-                     [network.vlan], [src_ip, dst_ip, c_dmac, c_port,
-                                      network.id])
+                for remote_site, mac_route in remote_mac_routes:
+                    dst_ip = 'fd00:0:%d:1::2' % remote_site.id
+                    _add(commands[e], names, 'l2_tunnel', 'vxlan_encap',
+                         [network.vlan, mac_route.mac],
+                         [src_ip, dst_ip, c_dmac, c_port, network.id])
                 _add(commands[e], names, 'vxlan_map', 'vxlan_decap',
                      [network.id], [e_ports[s1]])
 
@@ -231,11 +265,25 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             _add(commands[s1], names, 'l2_fib', 'forward_l2',
                  [network.vlan, macs[site.abbr]['e_s1']], [s1_ports[e]])
             if network.vpn == 'l2':
-                peer = _network_peer(cfg, network, site)
-                peer_mac = _host_mac(
-                    net.get(cloud_name(peer, network)), s1_name(peer))
-                _add(commands[s1], names, 'l2_fib', 'forward_l2',
-                     [network.vlan, peer_mac], [s1_ports[e]])
+                for remote_site in cfg.network_sites(network):
+                    if remote_site.id == site.id:
+                        continue
+                    peer_mac = _host_mac(
+                        net.get(cloud_name(remote_site, network)),
+                        s1_name(remote_site))
+                    _add(commands[s1], names, 'l2_fib', 'forward_l2',
+                         [network.vlan, peer_mac], [s1_ports[e]])
+                if cfg.l2_tunnel == 'srv6':
+                    cloud_ports = [port]
+                    group_id = network.vlan * 2
+                    _add_mc_group(commands[s1], groups[s1], group_id,
+                                  [(0, cloud_ports + [s1_ports[e]])])
+                    _add_mc_group(commands[s1], groups[s1], group_id + 1,
+                                  [(0, cloud_ports)])
+                    _add(commands[s1], names, 'l2_bum', 'set_l2_bum',
+                         [network.vlan, port], [group_id])
+                    _add(commands[s1], names, 'l2_bum', 'set_l2_bum',
+                         [network.vlan, s1_ports[e]], [group_id + 1])
 
         # S2: A-facing trunk, cloud access ports; parallel VLANs denied.
         _add_port(commands[s2], names, s2_ports[a], 'set_trunk', 'set_trunk')
@@ -253,14 +301,43 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             _add(commands[s2], names, 'l2_fib', 'forward_l2',
                  [network.vlan, _host_mac(net.get(a), s2)], [s2_ports[a]])
             if network.vpn == 'l2':
-                peer = _network_peer(cfg, network, site)
-                peer_mac = _host_mac(
-                    net.get(cloud_name(peer, network)), s2_name(peer))
-                _add(commands[s2], names, 'l2_fib', 'forward_l2',
-                     [network.vlan, peer_mac], [s2_ports[a]])
+                for remote_site in cfg.network_sites(network):
+                    if remote_site.id == site.id:
+                        continue
+                    peer_mac = _host_mac(
+                        net.get(cloud_name(remote_site, network)),
+                        s2_name(remote_site))
+                    _add(commands[s2], names, 'l2_fib', 'forward_l2',
+                         [network.vlan, peer_mac], [s2_ports[a]])
+                if cfg.l2_tunnel == 'srv6':
+                    cloud_ports = [port]
+                    group_id = network.vlan * 2
+                    _add_mc_group(commands[s2], groups[s2], group_id,
+                                  [(0, cloud_ports)])
+                    _add_mc_group(commands[s2], groups[s2], group_id + 1,
+                                  [(0, cloud_ports)])
+                    _add(commands[s2], names, 'l2_bum', 'set_l2_bum',
+                         [network.vlan, port], [group_id])
+                    _add(commands[s2], names, 'l2_bum', 'set_l2_bum',
+                         [network.vlan, s2_ports[a]], [group_id + 1])
 
     for name, cmds in commands.items():
-        switch_cli(net.get(name).thrift_port, cmds)
+        thrift_port = net.get(name).thrift_port
+        output = switch_cli(thrift_port, cmds)
+        handles = _mc_handles(output)
+        expected = sum(count for _, count in groups[name])
+        if len(handles) != expected:
+            raise RuntimeError(
+                '%s: 创建了 %d 个 multicast node，解析到 %d 个 handle'
+                % (name, expected, len(handles)))
+        associations = []
+        index = 0
+        for group_id, count in groups[name]:
+            for _ in range(count):
+                associations.append('mc_node_associate %d %d'
+                                    % (group_id, handles[index]))
+                index += 1
+        switch_cli(thrift_port, associations)
 
 
 
@@ -402,12 +479,16 @@ def _configure_routers(net, cfg, macs):
                 cloud.cmd('ip -6 route replace default via %s dev %s'
                           % (gateway, intf.name))
             else:
-                peer = _network_peer(cfg, network, site)
-                remote_addr = cfg.cloud_address(network, peer)
-                remote_mac = _host_mac(
-                    net.get(cloud_name(peer, network)), s1_name(peer))
-                cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                          % (remote_addr, remote_mac, intf.name))
+                for remote_site in cfg.network_sites(network):
+                    if remote_site.id == site.id:
+                        continue
+                    remote_addr = cfg.cloud_address(network, remote_site)
+                    remote_mac = _host_mac(
+                        net.get(cloud_name(remote_site, network)),
+                        s1_name(remote_site))
+                    cloud.cmd(
+                        'ip -6 neigh replace %s lladdr %s dev %s nud permanent'
+                        % (remote_addr, remote_mac, intf.name))
 
 
 def _site_macs(net, cfg):

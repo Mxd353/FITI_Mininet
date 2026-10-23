@@ -15,14 +15,20 @@ class EvpnRouteModelTest(unittest.TestCase):
         self.table = build_evpn_routes(self.cfg)
 
     def test_local_route_counts(self):
-        # L3: 2 networks x 4 sites; L2: 2 networks x 2 sites (bj/sh).
+        # L3: 2 networks x 4 sites; L2: 2 networks x 4 sites.
         self.assertEqual(len(self.table.l3_routes()), 8)
-        self.assertEqual(len(self.table.imet_routes()), 4)
+        self.assertEqual(len(self.table.imet_routes()), 8)
         self.assertEqual(len(self.table.mac_ip_routes()), 0)
-        self.assertEqual(len(self.table.routes), 12)
+        self.assertEqual(len(self.table.routes), 16)
 
     def test_route_validation(self):
         self.assertEqual(validate_evpn_routes(self.table), [])
+
+    def test_l2_cloud_addresses_are_unique(self):
+        for network in self.cfg.l2_networks():
+            addresses = [self.cfg.cloud_address(network, site)
+                         for site in self.cfg.network_sites(network)]
+            self.assertEqual(len(addresses), len(set(addresses)))
 
     def test_route_update_and_roundtrip(self):
         route = self.table.l3_routes()[0]
