@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socketserver
 import threading
 from collections import defaultdict
@@ -82,16 +83,39 @@ class ParallelEvpnAgent:
         return switch, ' '.join(words)
 
     def _del(self, switch, table, keys):
-        return (switch, 'table_delete %s %s'
-                % (self.names['tables'][table],
-                   ' '.join(str(item) for item in keys)))
+        # simple_switch_CLI's table_delete takes an entry handle, not a key.
+        return (switch, ('delete', table, tuple(keys)))
+
+    def _delete_by_key(self, switch, table, keys):
+        table_name = self.names['tables'][table]
+        port = self.net.get(switch).thrift_port
+        try:
+            output = switch_cli(
+                port, ['table_dump_entry_from_key %s %s'
+                       % (table_name,
+                          ' '.join(str(item) for item in keys))])
+        except RuntimeError:
+            # Entry does not exist; withdrawal is idempotent.
+            return
+        match = re.search(r'Dumping entry\s+(0x[0-9a-fA-F]+)', output)
+        if match is None:
+            return
+        handle = int(match.group(1), 16)
+        switch_cli(port, ['table_delete %s %d' % (table_name, handle)])
 
     def _run(self, operations):
         commands = defaultdict(list)
+        deletes = defaultdict(list)
         for switch, command in operations:
-            commands[switch].append(command)
+            if isinstance(command, tuple) and command[0] == 'delete':
+                deletes[switch].append((command[1], command[2]))
+            else:
+                commands[switch].append(command)
         for switch, cmds in commands.items():
             switch_cli(self.net.get(switch).thrift_port, cmds)
+        for switch, items in deletes.items():
+            for table, keys in items:
+                self._delete_by_key(switch, table, keys)
 
     # ------------------------------------------------------------------
     # L3VPN
