@@ -10,7 +10,7 @@ socket with a real BGP session without changing the P4 data plane.
 
 Supported dynamic updates:
 
-* EVPN IP Prefix routes for L3VPN;
+* EVPN IP Prefix routes for L3VPN (l3_fib/vrf_map; local_sid stays static);
 * EVPN MAC/IP routes for known-unicast L2VPN.
 
 Dynamic IMET/BUM group membership is not supported yet; static groups from
@@ -106,17 +106,8 @@ class ParallelEvpnAgent:
                 ops.append(self._del(e, 'vrf_map', [route.prefix]))
                 ops.append(self._del(e, 'l3_fib',
                                      [network.id, route.prefix]))
-                if site.abbr == target.abbr:
-                    # local_sid is per (network, site), not per prefix.
-                    remaining = [
-                        item for item in self.table.l3_routes()
-                        if item.vni == route.vni
-                        and item.origin == route.origin
-                        and item.key() != route.key()
-                    ]
-                    if not remaining:
-                        ops.append(self._del(e, 'local_sid',
-                                             ['%s/128' % route.sid]))
+                # local_sid is static per (network, site) and is shared by
+                # all prefixes.  Do not add/remove it for individual routes.
                 continue
 
             ops.append(self._cmd(e, 'vrf_map', 'map_vrf',
@@ -127,10 +118,6 @@ class ParallelEvpnAgent:
                 ops.append(self._cmd(
                     e, 'l3_fib', 'forward_l3',
                     [network.id, route.prefix],
-                    [s1, cloud_mac, network.vlan]))
-                ops.append(self._cmd(
-                    e, 'local_sid', 'srv6_decap',
-                    ['%s/128' % route.sid],
                     [s1, cloud_mac, network.vlan]))
             else:
                 local_route = self.table.l3_route(network.id, site.abbr)

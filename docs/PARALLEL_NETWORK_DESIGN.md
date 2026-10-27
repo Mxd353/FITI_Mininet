@@ -432,7 +432,7 @@ python3 parallel_evpn.py --json /tmp/evpn-routes.json
 `/tmp/parallel_evpn.sock`。它把 `advertise` / `withdraw` 路由事件转换为
 bmv2 表项和 Linux C 路由更新：
 
-- L3 IP Prefix：更新 `vrf_map`、`l3_fib`、`local_sid` 和 C 路由；
+- L3 IP Prefix：更新 `vrf_map`、`l3_fib` 和 C 路由；`local_sid` 仍由静态控制面按网络/站点安装；
 - L2 MAC/IP：更新 `l2_tunnel`、S1/S2 的 `l2_fib` 和云服务器邻居；
 - 支持替换和撤销；路由不存在或校验失败时返回错误。
 
