@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from mininet.node import OVSBridge
 from mininet.topo import Topo
 
 from parallel.config import ParallelConfig
@@ -34,21 +35,34 @@ def cloud_name(site, network=None) -> str:
     return 'cl_%s' % site.abbr
 
 
-ROLE_OFFSET = {'E': 0, 'S1': 1, 'S2': 2}
+def switch_id(site, role='E') -> int:
+    """Stable dpid/Thrift offset for the site PE switch.
 
-
-def switch_id(site, role) -> int:
-    """Stable dpid/Thrift offset for a site switch."""
-    return (int(site.id) - 1) * 3 + ROLE_OFFSET[role] + 1
+    Only the PE (``E``) runs BMv2/P4; the access switches ``S1``/``S2`` are
+    OVS bridges and therefore do not consume a Thrift port.
+    """
+    if role != 'E':
+        raise ValueError('%s 不是 BMv2 交换机，只有 E 使用 P4' % role)
+    return int(site.id)
 
 
 def switch_ids(cfg) -> dict:
-    result = {}
-    for site in cfg.sites:
-        result[e_name(site)] = switch_id(site, 'E')
-        result[s1_name(site)] = switch_id(site, 'S1')
-        result[s2_name(site)] = switch_id(site, 'S2')
-    return result
+    return {e_name(site): switch_id(site, 'E') for site in cfg.sites}
+
+
+OVS_DPID_BASE = 1000
+
+
+def ovs_dpid(site, role) -> int:
+    """Unique OVS datapath id for an access switch.
+
+    ``Switch.defaultDpid`` only looks at the first number in the name, so
+    ``S1_bj`` and ``S1_sh`` would both become dpid 1.  Derive an explicit id
+    in a range that cannot collide with the BMv2 (E) dpids.
+    """
+    if role not in ('S1', 'S2'):
+        raise ValueError('%s 不是 OVS 接入交换机' % role)
+    return OVS_DPID_BASE + (int(site.id) - 1) * 2 + (0 if role == 'S1' else 1)
 
 PUBLIC_BORDER = 'pub_border'
 PUBLIC_FIX = 'fix'
@@ -68,6 +82,13 @@ class ParallelTopology(Topo):
      cloud
 
     北京 C 额外连接 pub_border / FIX。
+
+    设备实现：
+
+    * ``E``    BMv2 + P4（VRF/VSI、SRv6、BUM 复制）
+    * ``S1``   OVS 二层交换机（上行放行并行 VLAN）
+    * ``S2``   OVS 二层交换机（上行拒绝并行 VLAN）
+    * ``C``/``A``/``cloud``  Linux netns
     """
 
     def __init__(self, cfg: ParallelConfig, **kwargs):
@@ -86,15 +107,22 @@ class ParallelTopology(Topo):
         self.addHost(PUBLIC_BORDER)
         self.addHost(PUBLIC_FIX)
 
-        # BMv2 P4 devices.
+        # BMv2/P4 devices: the site PE (E) is the only programmable switch.
         for site in cfg.sites:
-            for role, name in (('E', e_name(site)),
-                               ('S1', s1_name(site)),
-                               ('S2', s2_name(site))):
-                # Mininet requires a canonical name (sN) or an explicit
-                # datapath id for non-canonical switch names.
-                self.addSwitch(name, dpid='%016x'
-                               % switch_id(site, role))
+            # Mininet requires a canonical name (sN) or an explicit
+            # datapath id for non-canonical switch names.
+            self.addSwitch(e_name(site),
+                           dpid='%016x' % switch_id(site, 'E'))
+
+        # Access switches S1/S2 are ordinary 802.1Q bridges.  They run as
+        # Mininet OVS bridges instead of BMv2 to save one switch process per
+        # port; VLAN forwarding/filtering is configured in parallel/ovs.py.
+        # ``listenPort=0`` avoids one unused OpenFlow listener per bridge
+        # (there is no controller in this scenario).
+        for site in cfg.sites:
+            for role, name in (('S1', s1_name(site)), ('S2', s2_name(site))):
+                self.addSwitch(name, cls=OVSBridge, listenPort=0,
+                               dpid='%016x' % ovs_dpid(site, role))
 
         # Site-to-site core links follow the actual FITI topology
         # (configs/fiti.json).  Each site's C router is one FITI node.

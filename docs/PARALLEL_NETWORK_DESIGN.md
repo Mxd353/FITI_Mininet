@@ -6,7 +6,8 @@
 
 当前执行状态：
 
-- 已完成 41 站点拓扑、`parallel/` 子项目、BMv2 P4 程序；
+- 已完成 41 站点拓扑、`parallel/` 子项目、E 的 BMv2 P4 程序；
+- 站点接入交换机 S1/S2 使用 OVS，VLAN 放行/拒绝由 trunk 列表实现；
 - 每站点一台云服务器，用 VLAN 子接口区分并行网络切片；
 - 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN，均覆盖全部站点；
 - L3VPN/L2VPN 使用静态 SRv6，VXLAN 保留为回退模式；
@@ -146,20 +147,21 @@ interface ten-gigabitethernet 3/1/1.3800
 
 ```text
 Mininet                 负责网络命名空间、veth、链路和生命周期
-BMv2 + P4               负责可编程交换/PE 数据平面
+BMv2 + P4               负责站点 PE（E）的可编程数据平面
+OVS                     负责 S1/S2 接入交换机的 VLAN 转发与过滤
 Linux netns             负责传统路由器、云服务器、公网边界
-Python 控制面           负责生成并下发静态 P4 表项
+Python 控制面           负责生成并下发 E 的静态 P4 表项、配置 OVS
 ```
 
 ### 2.2 推荐设备映射
 
-为了同时验证 PDF 的拓扑语义和 P4 数据平面，建议采用 P4 重点映射：
+为了同时验证 PDF 的拓扑语义和可编程 PE，采用以下映射：
 
 | 逻辑设备 | 仿真实现 | 说明 |
 | --- | --- | --- |
 | E_bj / E_sh / E_gz / E_cd | BMv2 + P4 | 试验路由器，承载 VRF、L3VPN、L2VPN/SRv6 数据平面 |
-| S1_bj / S1_sh / S1_gz / S1_cd | BMv2 + P4 | 站点接入交换机，放行并行网络 VLAN |
-| S2_bj / S2_sh / S2_gz / S2_cd | BMv2 + P4 | 站点接入交换机，上行拒绝并行网络 VLAN |
+| S1_bj / S1_sh / S1_gz / S1_cd | OVS | 站点接入交换机，放行并行网络 VLAN |
+| S2_bj / S2_sh / S2_gz / S2_cd | OVS | 站点接入交换机，上行拒绝并行网络 VLAN |
 | C_bj / C_sh / C_gz / C_cd | Linux netns | 传统核心路由器，IPv6 转发/静态路由 |
 | A_bj / A_sh / A_gz / A_cd | Linux netns | 传统汇聚路由器 |
 | cl-* | Linux netns | 云计算服务器 |
@@ -167,19 +169,21 @@ Python 控制面           负责生成并下发静态 P4 表项
 
 这样：
 
-- P4 重点在 E/S1/S2，能验证 VLAN、VRF、L3 转发、L2 桥接、
-  SRv6/VXLAN 封装；
+- P4 集中在 E，负责真正的可编程部分：VRF/VSI、L3 转发、L2 桥接、
+  SRv6/VXLAN 封装、BUM 复制；
+- S1/S2 在 PDF 中本来就是普通站点交换机，用 OVS 实现 VLAN 转发、
+  MAC 学习和 S2 上行过滤，语义更贴近原方案；
 - C/A 保持传统三层转发节点，符合“普通三层节点用 netns”的要求；
 - 云服务器和公网边界用 netns，便于运行 `ping6`、`tcpdump`、FRR 等工具。
 
 如果要求严格按“E 也是传统路由器”建模，也可以使用备选映射：
 
 - E 用 Linux VRF + 静态路由；
-- S1/S2 用 BMv2 P4，只做 VLAN/过滤/L2；
+- S1/S2 用 OVS 或 Linux bridge，只做 VLAN/过滤/L2；
 - L3VPN 由 E 的 Linux VRF 验证，P4 只验证接入和隔离。
 
-两种映射不能混称为同一种实现。建议主方案使用 P4 重点映射，备选映射作为
-“PDF 配置语义对照”。
+两种映射不能混称为同一种实现。建议主方案使用“E 用 P4、S1/S2 用 OVS”的
+映射，备选映射作为“PDF 配置语义对照”。
 
 ## 3. 仿真拓扑
 
@@ -206,6 +210,7 @@ Python 控制面           负责生成并下发静态 P4 表项
 - C 路由按 FITI 图的最短路径计算下一跳；
 - `C_bj` 同时连接公网边界；
 - 每站点只有一台云服务器，通过 S1/S2 trunk 上的 VLAN 子接口区分切片；
+- 每站点 `E` 是 BMv2/P4，`S1`/`S2` 是 OVS，`C`/`A`/cloud 是 netns；
 - L3VPN 网络 1/2 覆盖全部 41 站点；
 - L2VPN 网络 3/4 覆盖全部 41 站点；已知单播按远端 MAC 选择 SID，BUM
   使用 E 的 multicast group + egress_rid 做 ingress replication。
@@ -213,13 +218,24 @@ Python 控制面           负责生成并下发静态 P4 表项
 ### 3.2 双归与 VLAN 策略
 
 PDF 标注 S1/S2 到云服务器有 `M-LA`、`G` 两类链路，但未给出链路聚合细节。
-仿真建议：
+仿真实现：
 
 - 每个云服务器创建两个 veth，分别接 S1 和 S2；
 - 并行网络业务 VLAN 只从 S1 上行放行；
 - S2 上行对 3501-3900 做拒绝；
 - 云服务器默认路由/策略路由优先走 S1；
 - S2 作为非并行网络接入或备用路径，不参与并行网络转发。
+
+S1/S2 是 OVS bridge，VLAN 策略通过 trunk 列表实现：
+
+```text
+S1  E 口 / cloud 口   trunks=1-4094
+S2  cloud 口          trunks=1-4094
+S2  A 口              trunks=1-3500,3901-4094
+```
+
+OVS 的端口级 VLAN 过滤同时作用于入向和出向，等价于 P4 里
+`uplink_filter` 的 `deny_parallel`，但不需要为接入交换机维护表项。
 
 如果后续需要模拟 LACP/链路聚合，可在 netns 中增加 bond，但首期不建议，
 因为 Mininet 对 bond 和硬件卸载的模拟有限。
@@ -308,24 +324,28 @@ Ethernet -> VLAN -> IPv6 -> UDP -> VXLAN -> inner Ethernet -> inner VLAN -> inne
 
 ### 5.2 表设计
 
+E（BMv2/P4）上的表：
+
 | 表 | key | 作用 |
 | --- | --- | --- |
 | `port_cfg` | ingress_port | access/trunk、默认 VLAN |
 | `vlan_map` | VLAN | 网络 ID、VRF、VPN 类型 |
-| `uplink_filter` | port + VLAN | S1 放行、S2 拒绝并行 VLAN |
 | `l3_fib` | vrf + IPv6 前缀 | L3VPN 下一跳/端口/DMAC/SRv6 SID |
-| `l2_fib` | VLAN + MAC | L2VPN 本地/远端 MAC 转发 |
-| `srv6_local` | IPv6 DA | End/End.DT6/End.DT2 等本地 SID |
-| `srv6_encap` | vrf/网络 | SRv6 封装参数 |
+| `l2_tunnel` | VLAN + MAC | L2VPN 已知单播到远端 SID |
+| `l2_bum` / `l2_rep_sid` | VLAN + 入端口 / rid | BUM ingress replication |
+| `local_sid` | IPv6 DA | 本端 SRv6 SID 解封装 |
 | `vxlan_map` | VNI | L2VPN 过渡封装/解封装 |
-| `public_filter` | 前缀 | 公网前缀过滤（也可由 netns 实现） |
+
+`uplink_filter`、`l2_fib` 仍在 P4 程序中，但接入交换机改为 OVS 后不再下发：
+VLAN 放行/拒绝由 OVS trunk 列表完成，MAC 转发由 OVS 学习完成。
 
 ### 5.3 隔离原则
 
 - VLAN 只负责接入区分，不能单独作为 L3VPN 隔离；
 - L3VPN 必须使用 `vrf_id` 隔离路由表；
 - L2VPN 必须使用 VNI/VSI 隔离 MAC 表；
-- S2 上行 VLAN 过滤必须在 P4 中显式丢弃，而不是依赖没有表项；
+- S2 上行 VLAN 过滤必须显式拒绝，而不是依赖没有表项；当前由 OVS
+  的 trunk 列表完成，入向和出向都生效；
 - 不同并行网络的同一 SID/MAC 不能互相命中。
 
 ## 6. L3VPN 仿真流程
@@ -362,20 +382,20 @@ l3_fib:   (300, 240a:a806:300:2::/64) -> E_sh 下一跳
 
 ```text
 cl_sh
-  -> S1_sh access VLAN 3800
+  -> S1_sh OVS: VLAN 3800 接入，二层转发
   -> E_sh P4: vlan_map(3800) -> l2vpn, vsi=300
-  -> l2_fib(vlan=3800, dst_mac)
+  -> l2_tunnel(vlan=3800, dst_mac)
   -> 远端 MAC：SRv6 封装到 E_bj 的 locator
   -> E_bj 解封装
-  -> l2_fib 本地 MAC -> S1_bj -> cl_bj
+  -> S1_bj OVS: 按目的 MAC 转发 -> cl_bj
 ```
 
 多站点扩展后，E 的 `l2_tunnel` 以 `(VLAN, 目的 MAC)` 为键选择远端 SID；
 已知单播直接查表，广播/组播/未知单播进入 `l2_bum` 表，按 VLAN 和入端口
 选择 multicast group。E 为每个远端站点创建一个 multicast node（相同 C
 端口、不同 rid）；egress 的 `l2_rep_sid` 按 rid 选择远端 SID，从而完成
-ingress replication。S1/S2 只做本地点对点 FIB 和本地 BUM 复制，不封装
-SRv6。
+ingress replication。S1/S2 只是 OVS 二层交换机：MAC 学习、泛洪和 VLAN
+过滤由 OVS 完成，不封装 SRv6，也不再安装静态 `l2_fib` 或 multicast group。
 
 PDF 的目标封装是 **EVPN SRv6**，不是 VXLAN。建议分两级实现：
 
@@ -405,14 +425,14 @@ PDF 的目标封装是 **EVPN SRv6**，不是 VXLAN。建议分两级实现：
 
 Python 根据 `configs/parallel.json` 生成：
 
-- `vlan_map`；
-- `uplink_filter`；
-- `l3_fib`；
-- `l2_fib`；
+- E 的 `vlan_map`；
+- E 的 `l3_fib` / `l2_tunnel` / `l2_bum` / `local_sid`；
 - SRv6/VXLAN 封装参数；
+- OVS 接入交换机的 trunk VLAN 列表；
 - 公网前缀过滤规则。
 
-静态表项通过 P4Runtime 或 Thrift 下发。这种方式适合验证数据平面和隔离。
+E 的表项通过 Thrift 下发（P4Runtime 可作为后续南向替代）；S1/S2 通过
+`ovs-vsctl` 配置。这种方式适合验证数据平面和隔离。
 
 第一阶段还增加了 `parallel/evpn.py` 的 EVPN 路由模型：
 
@@ -422,7 +442,7 @@ Python 根据 `configs/parallel.json` 生成：
 - `RouteTable` 提供 advertise/withdraw/replace 事件、JSON 导入导出和 SID 冲突校验。
 
 当前 `l3_fib`、L3 `local_sid` 以及 L2 SRv6 隧道/解封装由路由对象驱动；
-VLAN、L2 FIB 和公网表项仍由静态控制面生成。可免 root 查看：
+VLAN、公网表项和 OVS trunk 策略仍由静态控制面生成。可免 root 查看：
 
 ```bash
 make parallel-evpn-dump
@@ -439,7 +459,8 @@ python3 parallel_evpn.py --json /tmp/evpn-routes.json
 bmv2 表项和 Linux C 路由更新：
 
 - L3 IP Prefix：更新 `vrf_map`、`l3_fib` 和 C 路由；`local_sid` 仍由静态控制面按网络/站点安装；
-- L2 MAC/IP：更新 `l2_tunnel`、S1/S2 的 `l2_fib` 和云服务器邻居；
+- L2 MAC/IP：更新 E 的 `l2_tunnel` 和云服务器邻居；S1/S2 由 OVS 学习，
+  不再下发静态 `l2_fib`；
 - 支持替换和撤销；路由不存在或校验失败时返回错误。
 
 ```bash
@@ -477,8 +498,8 @@ Reflector 和 EVPN NLRI 编解码。
 ### 阶段 1：VLAN 接入与过滤
 
 - 配置 VLAN 3501-3504；
-- S1 上行放行；
-- S2 上行拒绝；
+- S1 两个端口 trunk 放行全部 VLAN；
+- S2 的 A 上行 trunk 排除 3501-3900；
 - 抓包验证 tag 和 drop。
 
 ### 阶段 2：L3VPN
@@ -524,7 +545,12 @@ ping6 -c 3 <peer>
 
 - 在 S1 上行抓包，确认 VLAN 3501-3504 存在；
 - 在 S2 上行抓包，确认并行 VLAN 被丢弃；
-- 检查 P4 `uplink_filter` 命中计数。
+- 检查 OVS trunk 列表：
+
+```bash
+ovs-vsctl get port S1_bj-eth1 trunks
+ovs-vsctl get port S2_bj-eth1 trunks
+```
 
 ### 11.3 L3VPN
 
@@ -536,7 +562,7 @@ ping6 -c 3 <peer>
 ### 11.4 L2VPN
 
 - 同 VLAN 跨站点 `ping6` 成功；
-- 检查 MAC 表、远端 MAC 隧道和 BUM multicast group；
+- 检查 E 的 `l2_tunnel`、BUM multicast group 和 OVS MAC 表；
 - 抓包确认 SRv6 外层：BJ/上海/广州/成都之间使用不同远端 SID；
 - VXLAN 回退模式只验证已知单播；
 - 不同 VNI/VSI 互不通。
@@ -556,9 +582,11 @@ ping6 -c 3 <peer>
 - L2VPN 目标是 EVPN SRv6；VXLAN 只是过渡验证；
 - L2VPN 多站点 BUM 使用静态 multicast group + egress_rid；VXLAN
   回退模式只支持已知单播；
+- 接入交换机 S1/S2 是 OVS，MAC 学习和泛洪由 OVS 完成，不是 EVPN
+  下发的静态 FIB；
 - 完整 EVPN/SRv6 控制面不能只靠 BMv2，需要 FRR/BIRD/自定义控制器；
 - Linux netns 的 VRF、策略路由和 bond 行为与硬件路由器仍有差异；
-- 400 个并行网络需要关注 P4 表容量，建议 `vlan_map`/`l3_fib`/`l2_fib`
+- 400 个并行网络需要关注 P4 表容量，建议 `vlan_map`/`l3_fib`/`l2_tunnel`
   使用较大表项或按需加载。
 
 ## 13. 与现有工程的关系
@@ -568,23 +596,33 @@ ping6 -c 3 <peer>
 ```text
 parallel/
   __init__.py
-  config.py
-  topology.py
-  control.py
-  checks.py
+  bmv2.py             Thrift CLI 辅助
+  config.py           站点、网络、VLAN、IPv6
+  fiti_topology.py    FITI 实际拓扑与最短路径
+  topology.py         C/E/A/S1/S2/cloud
+  switch.py           BMv2（E）封装
+  ovs.py              S1/S2 的 OVS VLAN 配置
+  evpn.py             EVPN 路由模型
+  evpn_agent.py       动态路由 agent
+  control.py          E 的静态 P4 表项
+  runtime.py          Mininet 构建
+  p4.py               P4 编译与表名解析
 
+configs/fiti.json
 configs/parallel.json
+configs/parallel-min.json
 p4src/parallel_vpn.p4
 parallel_net.py
+parallel_evpn.py
+parallel_evpn_ctl.py
 docs/PARALLEL_NETWORK_DESIGN.md
 ```
 
 可复用：
 
 - `fiti/p4_mininet.py`：Mininet P4Host/P4Switch；
-- `fiti/p4runtime.py`：P4Runtime 表项下发；
-- `fiti/p4.py`：P4 编译、端口映射；
-- `fiti/log.py`：日志和进度。
+- `fiti/log.py`：日志和进度；
+- `fiti/paths.py`：项目路径。
 
 首期实现 41 站点、网络 1/2 的 L3VPN 和网络 3/4 的 L2VPN；
 公网和 EVPN/SRv6 控制面按阶段推进。

@@ -26,8 +26,8 @@ def _peer_intf(intf):
 
 
 def _switch_names(cfg):
-    return tuple(name for site in cfg.sites
-                 for name in (e_name(site), s1_name(site), s2_name(site)))
+    """BMv2/P4 switches: only the site PE (E) is programmable."""
+    return tuple(e_name(site) for site in cfg.sites)
 
 
 def _port_maps(net, cfg):
@@ -124,12 +124,8 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
     for site in cfg.sites:
         e = e_name(site)
         s1 = s1_name(site)
-        s2 = s2_name(site)
         c = c_name(site)
-        a = a_name(site)
         e_ports = switch_ports[e]
-        s1_ports = switch_ports[s1]
-        s2_ports = switch_ports[s2]
 
         # E: C-facing core port + S1-facing trunk.
         _add_port(commands[e], names, e_ports[c], 'set_core', 'set_core')
@@ -249,72 +245,9 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                 _add(commands[e], names, 'vxlan_map', 'vxlan_decap',
                      [network.id], [e_ports[s1]])
 
-        # S1: one trunk port to the single site cloud host.  VLAN tags
-        # distinguish all parallel-network slices on that host.
-        _add_port(commands[s1], names, s1_ports[e], 'set_trunk', 'set_trunk')
-        _add(commands[s1], names, 'uplink_filter', 'allow_parallel',
-             [s1_ports[e]])
-        cloud = cloud_name(site)
-        cloud_port = s1_ports[cloud]
-        _add_port(commands[s1], names, cloud_port, 'set_trunk', 'set_trunk')
-        for network in cfg.networks_for_site(site):
-            _add(commands[s1], names, 'vlan_map', 'map_l2',
-                 [network.vlan])
-            _add(commands[s1], names, 'l2_fib', 'forward_l2',
-                 [network.vlan, macs[site.abbr]['clouds'][network.id]],
-                 [cloud_port])
-            _add(commands[s1], names, 'l2_fib', 'forward_l2',
-                 [network.vlan, macs[site.abbr]['e_s1']], [s1_ports[e]])
-            if network.vpn == 'l2':
-                for remote_site in cfg.network_sites(network):
-                    if remote_site.id == site.id:
-                        continue
-                    peer_mac = macs[remote_site.abbr]['clouds'][network.id]
-                    _add(commands[s1], names, 'l2_fib', 'forward_l2',
-                         [network.vlan, peer_mac], [s1_ports[e]])
-                if cfg.l2_tunnel == 'srv6':
-                    group_id = network.vlan * 2
-                    _add_mc_group(commands[s1], groups[s1], group_id,
-                                  [(0, [cloud_port, s1_ports[e]])])
-                    _add_mc_group(commands[s1], groups[s1], group_id + 1,
-                                  [(0, [cloud_port])])
-                    _add(commands[s1], names, 'l2_bum', 'set_l2_bum',
-                         [network.vlan, cloud_port], [group_id])
-                    _add(commands[s1], names, 'l2_bum', 'set_l2_bum',
-                         [network.vlan, s1_ports[e]], [group_id + 1])
-
-        # S2: one trunk port to the same cloud host; parallel VLANs still
-        # cannot cross the A uplink.
-        _add_port(commands[s2], names, s2_ports[a], 'set_trunk', 'set_trunk')
-        _add(commands[s2], names, 'uplink_filter', 'deny_parallel',
-             [s2_ports[a]])
-        cloud_s2_port = s2_ports[cloud]
-        _add_port(commands[s2], names, cloud_s2_port, 'set_trunk', 'set_trunk')
-        for network in cfg.networks_for_site(site):
-            _add(commands[s2], names, 'vlan_map', 'map_l2',
-                 [network.vlan])
-            _add(commands[s2], names, 'l2_fib', 'forward_l2',
-                 [network.vlan, macs[site.abbr]['clouds'][network.id]],
-                 [cloud_s2_port])
-            _add(commands[s2], names, 'l2_fib', 'forward_l2',
-                 [network.vlan, _host_mac(net.get(a), s2)], [s2_ports[a]])
-            if network.vpn == 'l2':
-                for remote_site in cfg.network_sites(network):
-                    if remote_site.id == site.id:
-                        continue
-                    peer_mac = macs[remote_site.abbr]['clouds'][network.id]
-                    _add(commands[s2], names, 'l2_fib', 'forward_l2',
-                         [network.vlan, peer_mac], [s2_ports[a]])
-                if cfg.l2_tunnel == 'srv6':
-                    group_id = network.vlan * 2
-                    _add_mc_group(commands[s2], groups[s2], group_id,
-                                  [(0, [cloud_s2_port])])
-                    _add_mc_group(commands[s2], groups[s2], group_id + 1,
-                                  [(0, [cloud_s2_port])])
-                    _add(commands[s2], names, 'l2_bum', 'set_l2_bum',
-                         [network.vlan, cloud_s2_port], [group_id])
-                    _add(commands[s2], names, 'l2_bum', 'set_l2_bum',
-                         [network.vlan, s2_ports[a]], [group_id + 1])
+        # S1/S2 are OVS bridges: VLAN access, MAC learning, flooding and the
+        # S2 uplink VLAN filter are configured in parallel/ovs.py, so no
+        # static L2 FIB or multicast group is installed here.
 
     for name, cmds in commands.items():
         thrift_port = net.get(name).thrift_port
@@ -333,7 +266,6 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                                     % (group_id, handles[index]))
                 index += 1
         switch_cli(thrift_port, associations)
-
 
 
 def _run_ip(host, command, context):

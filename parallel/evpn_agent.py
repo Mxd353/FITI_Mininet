@@ -34,8 +34,7 @@ from parallel.control import (_action_name, _core_next, _host_intf,
 from parallel.evpn import (EvpnIpPrefixRoute, EvpnMacIpRoute, RouteTable,
                            build_evpn_routes, validate_evpn_routes)
 from parallel.p4 import runtime_names
-from parallel.topology import (a_name, c_name, cloud_name, e_name, s1_name,
-                               s2_name)
+from parallel.topology import c_name, cloud_name, e_name, s1_name
 
 DEFAULT_EVPN_SOCKET = '/tmp/parallel_evpn.sock'
 
@@ -195,28 +194,11 @@ class ParallelEvpnAgent:
         ops = []
         for site in self.cfg.network_sites(network):
             e = e_name(site)
-            s1 = s1_name(site)
-            s2 = s2_name(site)
             e_ports = self.switch_ports[e]
-            s1_ports = self.switch_ports[s1]
-            s2_ports = self.switch_ports[s2]
             cloud = self.net.get(cloud_name(site, network))
-            cloud_port = s1_ports[cloud_name(site, network)]
 
             if site.abbr == target.abbr:
-                if delete:
-                    ops.append(self._del(s1, 'l2_fib',
-                                         [network.vlan, route.mac]))
-                    ops.append(self._del(s2, 'l2_fib',
-                                         [network.vlan, route.mac]))
-                else:
-                    ops.append(self._cmd(s1, 'l2_fib', 'forward_l2',
-                                         [network.vlan, route.mac],
-                                         [cloud_port]))
-                    s2_port = s2_ports[cloud_name(site, network)]
-                    ops.append(self._cmd(s2, 'l2_fib', 'forward_l2',
-                                         [network.vlan, route.mac],
-                                         [s2_port]))
+                # S1/S2 are OVS bridges and learn the local MAC themselves.
                 continue
 
             local_route = self.table.imet_route(network.id, site.abbr)
@@ -225,10 +207,6 @@ class ParallelEvpnAgent:
                                  % (site.abbr, network.id))
             if delete:
                 ops.append(self._del(e, 'l2_tunnel',
-                                     [network.vlan, route.mac]))
-                ops.append(self._del(s1, 'l2_fib',
-                                     [network.vlan, route.mac]))
-                ops.append(self._del(s2, 'l2_fib',
                                      [network.vlan, route.mac]))
                 cloud.cmd('ip -6 neigh del %s dev %s'
                           % (route.ip, self.cfg.vlan_ifname(network)))
@@ -239,12 +217,6 @@ class ParallelEvpnAgent:
                     [network.vlan, route.mac],
                     [local_route.sid, route.sid,
                      self.macs[site.abbr]['e_c'], e_ports[c]]))
-                ops.append(self._cmd(s1, 'l2_fib', 'forward_l2',
-                                     [network.vlan, route.mac],
-                                     [s1_ports[e]]))
-                ops.append(self._cmd(s2, 'l2_fib', 'forward_l2',
-                                     [network.vlan, route.mac],
-                                     [s2_ports[a_name(site)]]))
                 cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
                           % (route.ip, route.mac,
                              self.cfg.vlan_ifname(network)))

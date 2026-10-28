@@ -26,8 +26,17 @@ from parallel.topology import ParallelTopology
 def _dump(cfg):
     dump_config(cfg)
     topo = ParallelTopology(cfg)
+    switches = sorted(topo.switches())
+    p4_switches = []
+    ovs_switches = []
+    for name in switches:
+        cls = topo.nodeInfo(name).get('cls')
+        (ovs_switches if cls is not None else p4_switches).append(name)
     print()
-    print('交换机: %s' % ' '.join(sorted(topo.switches())))
+    print('BMv2/P4 交换机（%d）: %s'
+          % (len(p4_switches), ' '.join(p4_switches)))
+    print('OVS 接入交换机（%d）: %s'
+          % (len(ovs_switches), ' '.join(ovs_switches)))
     print('主机: %s' % ' '.join(sorted(topo.hosts())))
     print('链路:')
     for link in topo.links():

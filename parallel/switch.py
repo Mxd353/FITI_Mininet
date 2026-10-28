@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""BMv2 switch wrappers for the parallel-network scenario."""
+"""BMv2 switch wrappers for the parallel-network PE (E) switches."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from fiti.p4_mininet import P4Switch
 
 
 class ParallelP4Switch(P4Switch):
-    """simple_switch with a stable Thrift port for each logical switch."""
+    """simple_switch with a stable Thrift port for each site PE (E)."""
 
     def __init__(self, name, json_path=None, thrift_base=11000,
                  p4_log_level='info', pcap_dump=None, log_dir=None,

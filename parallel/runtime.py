@@ -31,7 +31,7 @@ def _port_free(port):
 
 
 def find_free_thrift_base(base, count, step=100, attempts=20):
-    """Find a contiguous Thrift port range for all site switches."""
+    """Find a contiguous Thrift port range for all PE (E) switches."""
     base = int(base)
     for _ in range(attempts):
         if base + count > 65535:
@@ -63,10 +63,12 @@ def build_parallel_net(cfg: ParallelConfig, json_path=None,
         json_path = compile_p4(out=json_path)
     base = int(thrift_base if thrift_base is not None else cfg.thrift_base)
     requested_base = base
-    base = find_free_thrift_base(base, len(cfg.sites) * 3)
+    ids = switch_ids(cfg)
+    count = max(ids.values())
+    base = find_free_thrift_base(base, count)
     if base != requested_base:
         print('*** Thrift 端口段被占用，自动改用 %d～%d'
-              % (base + 1, base + len(cfg.sites) * 3))
+              % (base + 1, base + count))
     log_dir = ensure_log_dir(log_dir)
 
     topo = ParallelTopology(cfg)
@@ -74,7 +76,7 @@ def build_parallel_net(cfg: ParallelConfig, json_path=None,
         json_path, base,
         p4_log_level=cfg.p4_log_level,
         log_dir=log_dir,
-        switch_ids=switch_ids(cfg))
+        switch_ids=ids)
     net = Mininet(topo=topo, switch=factory, host=P4Host,
                   controller=None, link=TCLink,
                   autoSetMacs=True, build=False)
@@ -93,6 +95,10 @@ def build_parallel_net(cfg: ParallelConfig, json_path=None,
                               done='*** BMv2 交换机已启动'):
                     net.start()
             configure_forwarding(net, cfg)
+            from parallel.ovs import configure_ovs_switches
+            with Progress('*** 配置 S1/S2 OVS 接入交换机',
+                          done='*** OVS 接入交换机配置完成'):
+                configure_ovs_switches(net, cfg)
         if start and install_rules:
             from parallel.control import install_parallel_rules
             with Progress('*** 下发并行网络 P4 表项',

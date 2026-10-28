@@ -7,7 +7,8 @@
 - 41 个站点；
 - 每站点 `C/E/A/S1/S2` 和一台云服务器；
 - 4 个并行网络（2 个 L3VPN + 2 个 L2VPN）；
-- BMv2/P4 数据平面；
+- 站点 PE（`E`）使用 BMv2/P4；
+- 接入交换机（`S1`/`S2`）使用 OVS 二层交换；
 - SRv6 L3VPN/L2VPN；
 - L2VPN BUM ingress replication；
 - C2/FIX 公网静态接入；
@@ -18,7 +19,7 @@
 ## 分支
 
 ```text
-feature/parallel-network    41 站点、123 台 BMv2 当前实现
+feature/parallel-network    41 站点、41 台 BMv2 + 82 台 OVS 当前实现
 feature/parallel-41-switch  41 台站点交换机的未来优化分支
 ```
 
@@ -36,6 +37,7 @@ sudo modprobe 8021q
 ```
 
 - Mininet 2.3+；
+- Open vSwitch（`ovs-vsctl`、`ovs-vswitchd`）；
 - p4c（`p4c-bm2-ss`）；
 - bmv2（`simple_switch`、`simple_switch_CLI`）；
 - root 权限。
@@ -53,7 +55,8 @@ make parallel-run-min
 
 ```text
 4 个站点：北京、上海、天津、济南
-12 台 BMv2
+4 台 BMv2（每站点 E）
+8 台 OVS（每站点 S1/S2）
 14 个 Linux netns
 ```
 
@@ -81,14 +84,15 @@ make parallel-run
 
 ```text
 41 个站点
-123 台 BMv2
+41 台 BMv2（每站点 E）
+82 台 OVS（每站点 S1/S2）
 125 个 Linux netns
 ```
 
 全量启动较慢。Thrift 端口段被占用时会自动向后寻找空闲端口段，例如：
 
 ```text
-*** Thrift 端口段被占用，自动改用 11501～11623
+*** Thrift 端口段被占用，自动改用 11501～11541
 ```
 
 也可以显式指定起始端口：
@@ -107,8 +111,11 @@ make parallel-stop
 
 - `simple_switch`；
 - `parallel_net.py`；
-- Mininet 网络；
+- Mininet 网络与 OVS bridge；
 - `/tmp/parallel_evpn.sock`。
+
+注意：`parallel-stop` 里的 `mn -c` 会删除本机**所有** OVS bridge。
+如果这台机器上还跑着别的 OVS 实验，请先确认再执行。
 
 不要同时运行：
 
@@ -126,9 +133,9 @@ C — E — S1 — cloud
 C — A — S2 — cloud
 ```
 
-- `E`：BMv2/P4，负责 VRF、L3VPN、L2VPN 和 SRv6；
-- `S1`：BMv2/P4，上行放行并行 VLAN；
-- `S2`：BMv2/P4，上行拒绝并行 VLAN；
+- `E`：BMv2/P4，负责 VRF、L3VPN、L2VPN、SRv6 和 BUM 复制；
+- `S1`：OVS，上行放行并行 VLAN；
+- `S2`：OVS，上行拒绝并行 VLAN；
 - `C`、`A`：Linux netns；
 - `cloud`：每站点一台 Linux 主机；
 - `pub_border`、`fix`：北京公网边界。
@@ -163,6 +170,37 @@ cl_bj
 - L3 网络使用按源地址和目的前缀分流的策略路由；
 - L2 网络使用 VLAN 子接口和静态远端邻居；
 - 云服务器 MAC 按 `(站点, 网络)` 确定性生成。
+
+## 接入交换机（OVS）
+
+`S1`/`S2` 在 PDF 中就是普通站点交换机，因此不再跑 BMv2/P4，而是 Mininet
+OVS bridge：
+
+```text
+S1: E 口      trunks=1-4094
+    cloud 口  trunks=1-4094
+
+S2: cloud 口  trunks=1-4094
+    A 口      trunks=1-3500,3901-4094
+```
+
+含义：
+
+- `S1` 上行放行并行 VLAN 3501-3900；
+- `S2` 上行拒绝并行 VLAN 3501-3900，其余 VLAN 正常；
+- VLAN 转发、MAC 学习、广播泛洪由 OVS 完成；
+- 接入交换机不再下发静态 `l2_fib`，也不再创建 multicast group；
+- 只有 `E` 运行 P4 并占用 Thrift 端口。
+
+查看：
+
+```bash
+sudo ovs-vsctl show
+sudo ovs-vsctl get port S2_bj-eth1 trunks
+sudo ovs-appctl fdb/show S1_bj
+```
+
+`S2` 的过滤是 OVS 端口级 VLAN 过滤，入向和出向都会生效。
 
 ## 并行网络配置
 
@@ -308,10 +346,12 @@ make parallel-dump            # 41 站点拓扑
 make parallel-dump-min        # 4 站点拓扑
 make parallel-evpn-dump       # 41 站点路由模型
 make parallel-evpn-dump-min   # 4 站点路由模型
-make test-evpn                # 路由模型测试
+make test-evpn                # EVPN 路由模型测试
+make test-ovs                 # OVS 接入交换机配置测试
+make test                     # 全部单元测试
 
-make parallel-run             # 41 站点，123 台 BMv2
-make parallel-run-min         # 4 站点，12 台 BMv2
+make parallel-run             # 41 站点，41 台 BMv2 + 82 台 OVS
+make parallel-run-min         # 4 站点，4 台 BMv2 + 8 台 OVS
 make parallel-run-no-cli      # 41 站点后台模式
 make parallel-stop            # 清理
 ```
@@ -327,11 +367,12 @@ fiti/                       共享 Mininet/P4 辅助
 parallel/                   并行网络实现
 ├── bmv2.py                 Thrift CLI 辅助
 ├── config.py               站点、网络、VLAN、IPv6
-├── topology.py             C/E/A/S1/S2/cloud
+├── topology.py             C/E/A/S1/S2/cloud（E 为 BMv2，S1/S2 为 OVS）
 ├── switch.py               BMv2 交换机封装
+├── ovs.py                  S1/S2 的 OVS VLAN 配置
 ├── evpn.py                 EVPN 路由模型
 ├── evpn_agent.py           动态路由 agent
-├── control.py              静态 P4 表项
+├── control.py              E 的静态 P4 表项
 ├── runtime.py              Mininet 构建
 └── p4.py                   P4 编译和名称解析
 
@@ -359,7 +400,8 @@ parallel_evpn_ctl.py        agent 客户端
 - L2 BUM multicast group 是静态生成的；
 - VXLAN 回退模式只支持已知单播；
 - 动态 agent 只支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；
-- 123 台 BMv2 资源占用较高，全量启动较慢；
+- 接入交换机是 OVS，L2 转发靠 MAC 学习，不是 EVPN 下发的静态 FIB；
+- 41 台 BMv2 仍然占用较多资源，全量启动较慢；
 - `feature/parallel-41-switch` 尚未实现。
 
 ## 故障排查
@@ -401,6 +443,39 @@ python3 parallel_evpn_ctl.py status
 ```bash
 python3 /home/mxd/workspace/FITI_Mininet/parallel_evpn_ctl.py status
 ```
+
+### OVS 异常
+
+如果启动时报：
+
+```text
+Error connecting to ovs-db with ovs-vsctl
+```
+
+说明 `ovs-vswitchd` / `ovsdb-server` 没运行：
+
+```bash
+pgrep -af ovs-vswitchd
+sudo systemctl restart openvswitch-switch
+sudo ovs-vsctl show
+```
+
+查看接入交换机的 VLAN 和 MAC 表：
+
+```bash
+sudo ovs-vsctl get port S2_bj-eth1 trunks
+sudo ovs-appctl fdb/show S1_bj
+```
+
+### 并行 VLAN 从 S2 泄漏
+
+确认 S2 上行的 trunk 列表里没有 3501-3900：
+
+```bash
+sudo ovs-vsctl get port S2_bj-eth1 trunks
+```
+
+残留配置会随 `make parallel-stop` 里的 `mn -c` 清除。
 
 ### VLAN 子接口不存在
 
