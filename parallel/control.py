@@ -336,6 +336,14 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
 
 
 
+def _run_ip(host, command, context):
+    output = host.cmd(command)
+    if 'RTNETLINK' in output or 'Error:' in output:
+        raise RuntimeError('%s: %s 失败: %s'
+                           % (host.name, context, output.strip()))
+    return output
+
+
 def _set_addr(host, intf, address):
     name = intf.name if hasattr(intf, 'name') else str(intf)
     host.cmd('ip -6 addr replace %s dev %s' % (address, name))
@@ -488,10 +496,10 @@ def _configure_routers(net, cfg, macs):
                 cloud.cmd('ip -6 route replace %s dev %s table %d'
                           % (cfg.business_network(network, site),
                              ifname, table_id))
-                cloud.cmd('ip -6 route replace default via %s dev %s src %s '
-                          'table %d' % (gateway, ifname,
-                                        cfg.cloud_address(network, site),
-                                        table_id))
+                _run_ip(cloud,
+                        'ip -6 route replace default table %d via %s dev %s '
+                        'onlink' % (table_id, gateway, ifname),
+                        'L3 默认路由')
                 # Select the per-slice routing table by source and by the
                 # destination /48.  The source rule keeps a packet sourced
                 # from one slice from leaking into another slice's table.
@@ -522,9 +530,9 @@ def _configure_routers(net, cfg, macs):
         # L3 destinations are overridden by the per-network rules above.
         if l3_interfaces:
             network, gateway, ifname = l3_interfaces[0]
-            cloud.cmd('ip -6 route replace default via %s dev %s src %s'
-                      % (gateway, ifname,
-                         cfg.cloud_address(network, site)))
+            _run_ip(cloud,
+                    'ip -6 route replace default via %s dev %s onlink'
+                    % (gateway, ifname), '主机默认路由')
 
 
 def _site_macs(net, cfg):
