@@ -127,6 +127,9 @@ make parallel-evpn-dump
 # 编译并行网络 P4
 make parallel-p4
 
+# 清理上一次运行残留
+make parallel-stop
+
 # 启动 Mininet/BMv2（需要 root，41 站点 / 123 台 BMv2）
 make parallel-run
 

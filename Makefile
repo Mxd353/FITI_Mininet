@@ -13,6 +13,7 @@ PARALLEL_P4INFO  = build/parallel_vpn.p4info.txt
         traffic traffic-base traffic-global \
         traffic-continuous traffic-base-continuous traffic-global-continuous \
         check check-srv6 dump clean parallel-p4 parallel-dump parallel-run \
+        parallel-stop \
         parallel-evpn-dump parallel-dump-min parallel-evpn-dump-min \
         parallel-run-min parallel-run-no-cli-min test-evpn \
         parallel-run-no-cli
@@ -124,6 +125,12 @@ parallel-run: parallel-p4
 
 parallel-run-no-cli: parallel-p4
 	sudo python3 parallel_net.py --no-cli
+
+parallel-stop:
+	-sudo pkill -9 -f simple_switch
+	-sudo pkill -9 -f parallel_net.py
+	-sudo mn -c
+	-rm -f /tmp/parallel_evpn.sock
 
 parallel-run-min: parallel-p4
 	sudo python3 parallel_net.py --config configs/parallel-min.json
