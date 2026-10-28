@@ -30,7 +30,7 @@ from collections import defaultdict
 from parallel.bmv2 import switch_cli
 from parallel.config import DEFAULT_CONFIG, ParallelConfig, load_config
 from parallel.control import (_action_name, _core_next, _host_intf,
-                              _port_maps, _site_macs)
+                              _host_mac, _port_maps, _site_macs)
 from parallel.evpn import (EvpnIpPrefixRoute, EvpnMacIpRoute, RouteTable,
                            build_evpn_routes, validate_evpn_routes)
 from parallel.p4 import runtime_names
@@ -141,7 +141,8 @@ class ParallelEvpnAgent:
                 ops.append(self._cmd(
                     e, 'l3_fib', 'forward_l3',
                     [network.id, route.prefix],
-                    [s1, cloud_mac, network.vlan]))
+                    [s1, self.macs[site.abbr]['e_s1'], cloud_mac,
+                     network.vlan]))
             else:
                 local_route = self.table.l3_route(network.id, site.abbr)
                 if local_route is None:
@@ -153,6 +154,7 @@ class ParallelEvpnAgent:
                     [network.id, route.prefix],
                     [local_route.sid, route.sid,
                      self.macs[site.abbr]['e_c'],
+                     _host_mac(self.net.get(c), e),
                      self.switch_ports[e][c]]))
         return ops
 
@@ -216,7 +218,8 @@ class ParallelEvpnAgent:
                     e, 'l2_tunnel', 'srv6_l2_encap',
                     [network.vlan, route.mac],
                     [local_route.sid, route.sid,
-                     self.macs[site.abbr]['e_c'], e_ports[c]]))
+                     self.macs[site.abbr]['e_c'],
+                     _host_mac(self.net.get(c), e), e_ports[c]]))
                 cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
                           % (route.ip, route.mac,
                              self.cfg.vlan_ifname(network)))

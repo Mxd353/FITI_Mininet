@@ -287,7 +287,7 @@ control IngressImpl(inout headers_t hdr,
     }
 
     action srv6_encap(bit<128> src_sid, bit<128> dst_sid,
-                      bit<48> dmac, bit<9> port) {
+                      bit<48> smac, bit<48> dmac, bit<9> port) {
         hdr.inner_ipv6.setValid();
         hdr.inner_ipv6.version = hdr.ipv6.version;
         hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
@@ -299,7 +299,9 @@ control IngressImpl(inout headers_t hdr,
         hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
 
         hdr.ipv6.version = 6;
-        hdr.ipv6.trafficClass = 0;
+        // Copy the tenant DSCP into the outer header so the underlay can
+        // classify the tunnel exactly like the inner flow.
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
         hdr.ipv6.flowLabel = 0;
         hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + 64;
         hdr.ipv6.nextHdr = IPPROTO_SRH;
@@ -319,13 +321,16 @@ control IngressImpl(inout headers_t hdr,
         hdr.segment0.sid = dst_sid;
 
         hdr.vlan.setInvalid();
+        hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
         standard_metadata.egress_spec = port;
     }
 
-    action forward_l3(bit<9> port, bit<48> dmac, bit<12> out_vlan) {
+    action forward_l3(bit<9> port, bit<48> smac, bit<48> dmac,
+                      bit<12> out_vlan) {
         standard_metadata.egress_spec = port;
+        hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         if (out_vlan == VLAN_NONE) {
             // Removing the VLAN header must restore the inner EtherType.
@@ -357,7 +362,9 @@ control IngressImpl(inout headers_t hdr,
         default_action = drop;
     }
 
-    action srv6_decap(bit<9> port, bit<48> dmac, bit<12> out_vlan) {
+    action srv6_decap(bit<9> port, bit<48> smac, bit<48> dmac,
+                      bit<12> out_vlan) {
+        hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_VLAN;
         hdr.vlan.setValid();
@@ -384,7 +391,7 @@ control IngressImpl(inout headers_t hdr,
     }
 
     action srv6_l2_encap(bit<128> src_sid, bit<128> dst_sid,
-                         bit<48> dmac, bit<9> port) {
+                         bit<48> smac, bit<48> dmac, bit<9> port) {
         bit<16> overhead = 78;
         hdr.inner_ethernet.setValid();
         hdr.inner_ethernet.dstAddr = hdr.ethernet.dstAddr;
@@ -412,7 +419,9 @@ control IngressImpl(inout headers_t hdr,
 
         hdr.ipv6.setValid();
         hdr.ipv6.version = 6;
-        hdr.ipv6.trafficClass = 0;
+        // Outer DSCP follows the tenant frame, matching the L3VPN path.
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.isValid() ?
+                                hdr.inner_ipv6.trafficClass : 0;
         hdr.ipv6.flowLabel = 0;
         hdr.ipv6.payloadLen = overhead;
         if (hdr.inner_ipv6.isValid()) {
@@ -435,6 +444,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.segment0.sid = dst_sid;
 
         hdr.vlan.setInvalid();
+        hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
         standard_metadata.egress_spec = port;
@@ -509,8 +519,8 @@ control IngressImpl(inout headers_t hdr,
         default_action = l2_fib_nop;
     }
 
-    action vxlan_encap(bit<128> src, bit<128> dst, bit<48> dmac,
-                       bit<9> port, bit<24> vni) {
+    action vxlan_encap(bit<128> src, bit<128> dst, bit<48> smac,
+                       bit<48> dmac, bit<9> port, bit<24> vni) {
         bit<16> overhead = 70;
         hdr.inner_ethernet.setValid();
         hdr.inner_ethernet.dstAddr = hdr.ethernet.dstAddr;
@@ -537,7 +547,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
 
         hdr.ipv6.version = 6;
-        hdr.ipv6.trafficClass = 0;
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
         hdr.ipv6.flowLabel = 0;
         hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
         hdr.ipv6.nextHdr = IPPROTO_UDP;
@@ -558,6 +568,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.vxlan.reserved2 = 0;
 
         hdr.vlan.setInvalid();
+        hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
         standard_metadata.egress_spec = port;
@@ -725,7 +736,7 @@ control EgressImpl(inout headers_t hdr,
                    inout metadata_t meta,
                    inout standard_metadata_t standard_metadata) {
     action srv6_l2_encap_egress(bit<128> src_sid, bit<128> dst_sid,
-                                bit<48> dmac) {
+                                bit<48> smac, bit<48> dmac) {
         bit<16> overhead = 78;
         hdr.inner_ethernet.setValid();
         hdr.inner_ethernet.dstAddr = hdr.ethernet.dstAddr;
@@ -757,7 +768,9 @@ control EgressImpl(inout headers_t hdr,
 
         hdr.ipv6.setValid();
         hdr.ipv6.version = 6;
-        hdr.ipv6.trafficClass = 0;
+        // Outer DSCP follows the tenant frame, matching the L3VPN path.
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.isValid() ?
+                                hdr.inner_ipv6.trafficClass : 0;
         hdr.ipv6.flowLabel = 0;
         hdr.ipv6.payloadLen = overhead;
         if (hdr.inner_ipv6.isValid()) {
@@ -780,6 +793,7 @@ control EgressImpl(inout headers_t hdr,
         hdr.segment0.sid = dst_sid;
 
         hdr.vlan.setInvalid();
+        hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
     }

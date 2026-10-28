@@ -156,6 +156,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                 _add(commands[e], names, 'l3_fib', 'forward_l3',
                      [network.id, route.prefix],
                      [e_ports[s1],
+                      macs[site.abbr]['e_s1'],
                       macs[site.abbr]['clouds'][network.id],
                       network.vlan])
             else:
@@ -165,7 +166,8 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                                        % (site.abbr, network.id))
                 _add(commands[e], names, 'l3_fib', 'srv6_encap',
                      [network.id, route.prefix],
-                     [local_route.sid, route.sid, c_dmac, c_port])
+                     [local_route.sid, route.sid,
+                      macs[site.abbr]['e_c'], c_dmac, c_port])
 
         for network in cfg.l3_networks_for_site(site):
             local_route = evpn_routes.l3_route(network.id, site.abbr)
@@ -175,8 +177,8 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             local_sid = local_route.sid
             _add(commands[e], names, 'local_sid', 'srv6_decap',
                  ['%s/128' % local_sid],
-                 [e_ports[s1], macs[site.abbr]['clouds'][network.id],
-                  network.vlan])
+                 [e_ports[s1], macs[site.abbr]['e_s1'],
+                  macs[site.abbr]['clouds'][network.id], network.vlan])
 
             # The Linux core routers use underlay source addresses.  Replies
             # from cloud servers therefore have an underlay destination and
@@ -186,10 +188,10 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             for target in cfg.network_sites(network):
                 _add(commands[e], names, 'l3_fib', 'forward_l3',
                      [network.id, cfg.underlay_network(target)],
-                     [c_port, c_dmac, 0])
+                     [c_port, macs[site.abbr]['e_c'], c_dmac, 0])
             _add(commands[e], names, 'l3_fib', 'forward_l3',
                  [network.id, '2001:255:0:100::/64'],
-                 [c_port, c_dmac, 0])
+                 [c_port, macs[site.abbr]['e_c'], c_dmac, 0])
 
         # L2VPN: SRv6 by default; VXLAN remains available as a fallback.
         # Known unicast is keyed by remote cloud MAC.  BUM traffic uses a
@@ -220,7 +222,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                     _add(commands[e], names, 'l2_tunnel', 'srv6_l2_encap',
                          [network.vlan, mac_route.mac],
                          [local_route.sid, remote_route.sid,
-                          c_dmac, c_port])
+                          macs[site.abbr]['e_c'], c_dmac, c_port])
 
                 group_id = network.vlan * 2
                 nodes = [(remote_site.id, [c_port])
@@ -234,14 +236,16 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                     _add(commands[e], names, 'l2_rep_sid',
                          'srv6_l2_encap_egress',
                          [network.vlan, remote_site.id],
-                         [local_route.sid, remote_route.sid, c_dmac])
+                         [local_route.sid, remote_route.sid,
+                          macs[site.abbr]['e_c'], c_dmac])
             else:
                 src_ip = 'fd00:0:%d:1::2' % site.id
                 for remote_site, mac_route in remote_mac_routes:
                     dst_ip = 'fd00:0:%d:1::2' % remote_site.id
                     _add(commands[e], names, 'l2_tunnel', 'vxlan_encap',
                          [network.vlan, mac_route.mac],
-                         [src_ip, dst_ip, c_dmac, c_port, network.id])
+                         [src_ip, dst_ip, macs[site.abbr]['e_c'],
+                          c_dmac, c_port, network.id])
                 _add(commands[e], names, 'vxlan_map', 'vxlan_decap',
                      [network.id], [e_ports[s1]])
 
