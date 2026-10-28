@@ -131,6 +131,7 @@ make parallel-p4
 make parallel-stop
 
 # 启动 Mininet/BMv2（需要 root，41 站点 / 123 台 BMv2）
+# Thrift 端口段被占用时会自动向后寻找空闲段
 make parallel-run
 
 # 最小验证子集：北京/上海/广州/成都，12 台 BMv2

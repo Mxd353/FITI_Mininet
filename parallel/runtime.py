@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import socket
 
 from mininet.link import TCLink
 from mininet.net import Mininet
@@ -16,6 +17,30 @@ from parallel.p4 import compile_p4
 from parallel.switch import make_switch_factory
 from parallel.topology import (ParallelTopology, a_name, c_name,
                                switch_ids)
+
+
+def _port_free(port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(('127.0.0.1', port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def find_free_thrift_base(base, count, step=100, attempts=20):
+    """Find a contiguous Thrift port range for all site switches."""
+    base = int(base)
+    for _ in range(attempts):
+        if base + count > 65535:
+            break
+        if all(_port_free(base + index) for index in range(1, count + 1)):
+            return base
+        base += step
+    raise RuntimeError('找不到可用的 Thrift 端口段（需要 %d 个连续端口）'
+                       % count)
 
 
 def configure_forwarding(net, cfg):
@@ -37,6 +62,11 @@ def build_parallel_net(cfg: ParallelConfig, json_path=None,
     if start:
         json_path = compile_p4(out=json_path)
     base = int(thrift_base if thrift_base is not None else cfg.thrift_base)
+    requested_base = base
+    base = find_free_thrift_base(base, len(cfg.sites) * 3)
+    if base != requested_base:
+        print('*** Thrift 端口段被占用，自动改用 %d～%d'
+              % (base + 1, base + len(cfg.sites) * 3))
     log_dir = ensure_log_dir(log_dir)
 
     topo = ParallelTopology(cfg)
