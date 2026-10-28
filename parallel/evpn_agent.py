@@ -27,7 +27,7 @@ import socketserver
 import threading
 from collections import defaultdict
 
-from fiti.p4 import switch_cli
+from parallel.bmv2 import switch_cli
 from parallel.config import DEFAULT_CONFIG, ParallelConfig, load_config
 from parallel.control import (_action_name, _core_next, _host_intf,
                               _port_maps, _site_macs)

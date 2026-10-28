@@ -10,7 +10,7 @@ and public access uses static FIX routes.  It is not a BGP/EVPN control-plane im
 from __future__ import annotations
 
 
-from fiti.p4 import _mc_handles, switch_cli
+from parallel.bmv2 import mc_handles, switch_cli
 from parallel.config import ParallelConfig
 from parallel.evpn import build_evpn_routes, validate_evpn_routes
 from parallel.p4 import runtime_names
@@ -319,7 +319,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
     for name, cmds in commands.items():
         thrift_port = net.get(name).thrift_port
         output = switch_cli(thrift_port, cmds)
-        handles = _mc_handles(output)
+        handles = mc_handles(output)
         expected = sum(count for _, count in groups[name])
         if len(handles) != expected:
             raise RuntimeError(
