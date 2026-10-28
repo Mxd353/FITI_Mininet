@@ -4,6 +4,7 @@
             "id": "1",
             "name": "北京",
             "abbr": "bj",
+            "enabled": true,
             "x": 86,
             "y": -59,
             "degree": 12
@@ -12,6 +13,7 @@
             "id": "2",
             "name": "上海",
             "abbr": "sh",
+            "enabled": true,
             "x": 204,
             "y": 59,
             "degree": 5
@@ -20,6 +22,7 @@
             "id": "3",
             "name": "西安",
             "abbr": "xa",
+            "enabled": true,
             "x": -12,
             "y": 19,
             "degree": 6
@@ -28,6 +31,7 @@
             "id": "4",
             "name": "南京",
             "abbr": "nj",
+            "enabled": true,
             "x": 173,
             "y": 104,
             "degree": 2
@@ -36,6 +40,7 @@
             "id": "5",
             "name": "广州",
             "abbr": "gz",
+            "enabled": true,
             "x": 87,
             "y": 240,
             "degree": 5
@@ -44,6 +49,7 @@
             "id": "6",
             "name": "沈阳",
             "abbr": "sy",
+            "enabled": true,
             "x": 192,
             "y": -123,
             "degree": 3
@@ -52,6 +58,7 @@
             "id": "7",
             "name": "武汉",
             "abbr": "wh",
+            "enabled": true,
             "x": 87,
             "y": 107,
             "degree": 5
@@ -60,6 +67,7 @@
             "id": "8",
             "name": "成都",
             "abbr": "cd",
+            "enabled": true,
             "x": -71,
             "y": 107,
             "degree": 4
@@ -68,6 +76,7 @@
             "id": "9",
             "name": "北大",
             "abbr": "pku",
+            "enabled": true,
             "x": 66,
             "y": -156,
             "degree": 1
@@ -76,6 +85,7 @@
             "id": "10",
             "name": "北邮",
             "abbr": "bupt",
+            "enabled": true,
             "x": 119,
             "y": -144,
             "degree": 1
@@ -84,6 +94,7 @@
             "id": "11",
             "name": "北航",
             "abbr": "buaa",
+            "enabled": true,
             "x": 31,
             "y": -124,
             "degree": 1
@@ -92,6 +103,7 @@
             "id": "12",
             "name": "复旦",
             "abbr": "fudan",
+            "enabled": true,
             "x": 245,
             "y": 40,
             "degree": 1
@@ -100,6 +112,7 @@
             "id": "13",
             "name": "同济",
             "abbr": "tongji",
+            "enabled": true,
             "x": 245,
             "y": 95,
             "degree": 1
@@ -108,6 +121,7 @@
             "id": "14",
             "name": "天津",
             "abbr": "tjn",
+            "enabled": true,
             "x": 131,
             "y": -40,
             "degree": 2
@@ -116,6 +130,7 @@
             "id": "15",
             "name": "合肥",
             "abbr": "hef",
+            "enabled": true,
             "x": 145,
             "y": 75,
             "degree": 2
@@ -124,6 +139,7 @@
             "id": "16",
             "name": "厦门",
             "abbr": "xmn",
+            "enabled": true,
             "x": 173,
             "y": 199,
             "degree": 2
@@ -132,6 +148,7 @@
             "id": "17",
             "name": "重庆",
             "abbr": "chq",
+            "enabled": true,
             "x": -11,
             "y": 107,
             "degree": 2
@@ -140,6 +157,7 @@
             "id": "18",
             "name": "兰州",
             "abbr": "lzh",
+            "enabled": true,
             "x": -71,
             "y": 24,
             "degree": 1
@@ -148,6 +166,7 @@
             "id": "19",
             "name": "哈尔滨",
             "abbr": "hrb",
+            "enabled": true,
             "x": 225,
             "y": -188,
             "degree": 1
@@ -156,6 +175,7 @@
             "id": "20",
             "name": "杭州",
             "abbr": "hzh",
+            "enabled": true,
             "x": 204,
             "y": 74,
             "degree": 3
@@ -164,6 +184,7 @@
             "id": "21",
             "name": "长春",
             "abbr": "chc",
+            "enabled": true,
             "x": 226,
             "y": -148,
             "degree": 2
@@ -172,6 +193,7 @@
             "id": "22",
             "name": "大连",
             "abbr": "dln",
+            "enabled": true,
             "x": 192,
             "y": -55,
             "degree": 1
@@ -180,6 +202,7 @@
             "id": "23",
             "name": "济南",
             "abbr": "jnn",
+            "enabled": true,
             "x": 145,
             "y": 1,
             "degree": 3
@@ -188,6 +211,7 @@
             "id": "24",
             "name": "长沙",
             "abbr": "chs",
+            "enabled": true,
             "x": 87,
             "y": 154,
             "degree": 2
@@ -196,6 +220,7 @@
             "id": "25",
             "name": "郑州",
             "abbr": "zhz",
+            "enabled": true,
             "x": 88,
             "y": 33,
             "degree": 2
@@ -204,6 +229,7 @@
             "id": "26",
             "name": "深圳",
             "abbr": "szh",
+            "enabled": true,
             "x": 116,
             "y": 256,
             "degree": 1
@@ -212,6 +238,7 @@
             "id": "27",
             "name": "石家庄",
             "abbr": "sjz",
+            "enabled": true,
             "x": 104,
             "y": -26,
             "degree": 1
@@ -220,6 +247,7 @@
             "id": "28",
             "name": "太原",
             "abbr": "tyn",
+            "enabled": true,
             "x": 28,
             "y": -26,
             "degree": 1
@@ -228,6 +256,7 @@
             "id": "29",
             "name": "呼和浩特",
             "abbr": "hht",
+            "enabled": true,
             "x": 32,
             "y": -81,
             "degree": 1
@@ -236,6 +265,7 @@
             "id": "30",
             "name": "福州",
             "abbr": "fzh",
+            "enabled": true,
             "x": 185,
             "y": 155,
             "degree": 1
@@ -244,6 +274,7 @@
             "id": "31",
             "name": "南昌",
             "abbr": "nch",
+            "enabled": true,
             "x": 121,
             "y": 171,
             "degree": 1
@@ -252,6 +283,7 @@
             "id": "32",
             "name": "青岛",
             "abbr": "qda",
+            "enabled": true,
             "x": 175,
             "y": 1,
             "degree": 1
@@ -260,6 +292,7 @@
             "id": "33",
             "name": "南宁",
             "abbr": "nan",
+            "enabled": true,
             "x": 9,
             "y": 238,
             "degree": 1
@@ -268,6 +301,7 @@
             "id": "34",
             "name": "海口",
             "abbr": "hak",
+            "enabled": true,
             "x": 51,
             "y": 311,
             "degree": 1
@@ -276,6 +310,7 @@
             "id": "35",
             "name": "贵阳",
             "abbr": "gyn",
+            "enabled": true,
             "x": -11,
             "y": 160,
             "degree": 1
@@ -284,6 +319,7 @@
             "id": "36",
             "name": "昆明",
             "abbr": "kmn",
+            "enabled": true,
             "x": -72,
             "y": 203,
             "degree": 1
@@ -292,6 +328,7 @@
             "id": "37",
             "name": "拉萨",
             "abbr": "lsa",
+            "enabled": true,
             "x": -246,
             "y": 100,
             "degree": 1
@@ -300,6 +337,7 @@
             "id": "38",
             "name": "西宁",
             "abbr": "xnn",
+            "enabled": true,
             "x": -112,
             "y": 35,
             "degree": 1
@@ -308,6 +346,7 @@
             "id": "39",
             "name": "银川",
             "abbr": "ych",
+            "enabled": true,
             "x": -72,
             "y": -22,
             "degree": 1
@@ -316,6 +355,7 @@
             "id": "40",
             "name": "乌鲁木齐",
             "abbr": "wlq",
+            "enabled": true,
             "x": -250,
             "y": -135,
             "degree": 1
@@ -324,6 +364,7 @@
             "id": "41",
             "name": "中关村",
             "abbr": "zgc",
+            "enabled": true,
             "x": 130,
             "y": -95,
             "degree": 1

@@ -103,8 +103,13 @@ class SliceController:
         if not sl.hosts:
             raise SliceError('切片 %s 没有主机' % sl.id)
         seen = set()
+        disabled_abbr = {item.get('abbr')
+                         for item in self.data.get('_disabled', [])}
         for abbr in sl.hosts:
             if abbr not in self.by_abbr:
+                if abbr in disabled_abbr:
+                    raise SliceError('节点 %s 已在 fiti.json 中禁用'
+                                     '（enabled=false）' % abbr)
                 raise SliceError('未知节点: %s' % abbr)
             if abbr in seen:
                 raise SliceError('节点重复: %s' % abbr)

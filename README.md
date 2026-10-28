@@ -1,6 +1,6 @@
 # FITI Mininet + bmv2 拓扑
 
-用 Mininet 模拟 `configs/fiti.json` 中的 FITI 骨干拓扑。每个节点运行一台 bmv2
+用 Mininet 模拟 `configs/fiti.json` 中的 FITI 骨干拓扑。每个启用节点运行一台 bmv2
 `simple_switch` / `simple_switch_grpc`，加载 `p4src/fiti_slice.p4` 做
 VLAN 感知 L2 转发和交换机逐跳 SRv6；同一台交换机可以承载多个切片主机，
 切片支持运行中增删。
@@ -9,12 +9,38 @@ VLAN 感知 L2 转发和交换机逐跳 SRv6；同一台交换机可以承载多
 
 | 项目     | 说明                                                              |
 | -------- | ----------------------------------------------------------------- |
-| 节点     | 41 个（每个节点一台 bmv2 交换机 `s<id>`）                         |
-| 骨干链路 | 43 条                                                             |
+| 节点     | 默认 41 个（每个启用节点一台 bmv2 交换机 `s<id>`，可禁用）        |
+| 骨干链路 | 默认 43 条（禁用节点后自动过滤相关链路）                          |
 | 主机地址 | 基础模式 `10.0.0.<id>/24`；切片模式 `10.<切片序号>.0.<节点id>/24` |
 | 链路权重 | `weight` 4/2/1 映射为 100/50/10 Mbps                              |
 | 数据平面 | bmv2，P4-16 / v1model，L2 + SRv6                                  |
 | 控制平面 | 静态模式 Thrift；运行时模式 P4Runtime + Unix socket                |
+
+### 按需启动节点
+
+`configs/fiti.json` 的每个节点支持 `"enabled": true|false`，默认 `true`。
+设为 `false` 时：
+
+- 不创建该节点的 bmv2 交换机和主机，节省 bmv2 进程和 Mininet 资源；
+- 该节点相关的链路会被过滤，不参与端口映射、生成树和 P4 规则；
+- 切片配置不得引用该节点，否则会报错提示先启用或从切片中移除；
+- 如果禁用核心节点导致启用节点不连通，拓扑校验会给出告警。
+
+例如只关闭 `pku`：
+
+```json
+{
+  "id": "9",
+  "name": "北大",
+  "abbr": "pku",
+  "enabled": false,
+  "x": 66,
+  "y": -156,
+  "degree": 1
+}
+```
+
+`fiti_topo.py --dump` 会同时显示启用数量、总数和禁用节点列表。
 
 目录结构：
 
@@ -191,7 +217,7 @@ with fiti_network() as net:          # 自动清理
 
 ## 网络切片
 
-在 41 节点拓扑上用 VLAN 隔离多个切片。每个切片有独立主机、IP 子网和 VLAN，
+在启用节点拓扑上用 VLAN 隔离多个切片。每个切片有独立主机、IP 子网和 VLAN，
 共享物理链路带宽。设计细节见 [SLICING_DESIGN.md](docs/SLICING_DESIGN.md)。
 
 ### 示例切片
@@ -226,6 +252,7 @@ with fiti_network() as net:          # 自动清理
 | `srv6.decap_table`         | 静态主机 overlay 解封装路由表，默认 100                  |
 | `p4runtime`                | `thrift_base` / `grpc_base`                              |
 | `control.socket`           | 运行时 Unix socket 路径                                  |
+| `nodes[].enabled`          | 节点是否启动；默认 `true`，`false` 时跳过交换机和主机    |
 | `slices[].id`              | 切片标识，也是主机名前缀                                 |
 | `slices[].vlan` / `subnet` | 可选，需全局唯一                                         |
 | `slices[].hosts`           | 节点 `abbr` 列表或 `"all"`；同一节点可出现在多个切片     |
@@ -267,7 +294,7 @@ net.stop()
 
 ## P4Runtime 运行时与动态切片
 
-`fiti/runtime.py` 启动固定 41 节点拓扑，每节点运行 `simple_switch_grpc`，
+`fiti/runtime.py` 启动启用节点拓扑，每个启用节点运行 `simple_switch_grpc`，
 通过 P4Runtime 下发 pipeline、表项和 multicast group；主机 access 端口动态
 创建，端口热插拔走 Thrift 的 `port_add` / `port_remove`。
 
@@ -421,7 +448,7 @@ sudo python3 fiti_slice.py --slices configs/slices.json --pcap --pcap-dir pcap
 - 单播表项静态下发，不做 MAC 学习。
 - 泛洪在整棵生成树上扩散，没有按 VLAN 剪枝。
 - 所有切片共享物理链路带宽。
-- 每台交换机是一个独立的 bmv2 进程，41 节点占用较多内存和 CPU。
+- 每台交换机是一个独立的 bmv2 进程，节点数多时占用较多内存和 CPU。
 - P4Runtime 运行时需要 `grpcio` / `p4runtime`，并且要保留 Thrift 做端口热插拔。
 - 运行时新增切片不持久化，重启后只恢复 `configs/slices.json` 中的初始切片。
 - SRv6 封装增加约 40 + 8 + 16N 字节，主机 MTU 需要相应调小。

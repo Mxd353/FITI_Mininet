@@ -63,8 +63,8 @@ from fiti.log import Progress, quiet_mininet_console
 from fiti.p4 import (DEFAULT_P4_JSON, P4_LOG_LEVELS, access_vlan_errors,
                      choose_thrift_base, compile_p4, install_fabric,
                      make_switch_factory)
-from fiti.topo import (DEFAULT_BW_MAP, link_bandwidth, load_topology,
-                       switch_dpid, switch_name)
+from fiti.topo import (DEFAULT_BW_MAP, effective_topology, link_bandwidth,
+                       load_topology, switch_dpid, switch_name)
 from fiti.traffic import TrafficHost, run_random_traffic
 from fiti.p4_mininet import P4Host
 from fiti.paths import (DEFAULT_PCAP_DIR, DEFAULT_SLICES_FILE,
@@ -259,9 +259,14 @@ def _parse_slice(raw, index, defaults, data, used_ids, used_vlans,
         _error('切片 %s 的 hosts 必须是非空列表或 "all"' % sid)
 
     by_abbr = {node['abbr']: node for node in data['nodes']}
+    disabled_abbr = {item.get('abbr') for item in data.get('_disabled', [])}
     seen = set()
     for abbr in hosts:
         if abbr not in by_abbr:
+            if abbr in disabled_abbr:
+                _error('切片 %s 引用了已禁用节点 %s（fiti.json 中 '
+                       'enabled=false），请先启用该节点或从切片中移除'
+                       % (sid, abbr))
             _error('切片 %s 引用了不存在的节点 abbr: %s' % (sid, abbr))
         if abbr in seen:
             _error('切片 %s 的 hosts 重复: %s' % (sid, abbr))
@@ -450,7 +455,7 @@ def srv6_host_commands(meta, peers, srv6, iface='eth0'):
 # --------------------------------------------------------------------------
 
 class SliceTopology(Topo):
-    """共享 41 台 bmv2 交换机 + 每切片独立主机的 VLAN 切片拓扑。"""
+    """共享启用节点 bmv2 交换机 + 每切片独立主机的 VLAN 切片拓扑。"""
 
     def build(self, data, cfg):
         self.data = data
@@ -485,7 +490,7 @@ def build_slice_net(cfg, data=None, start=True, enable_srv6=None,
     install_rules:
       True  -> 启动后通过 Thrift 下发 port_cfg / l2_fwd / VLAN 泛洪组
     """
-    data = data or load_topology(cfg.topo_file)
+    data = effective_topology(data or load_topology(cfg.topo_file))
     topo = SliceTopology(data=data, cfg=cfg)
 
     json_path = cfg.p4.json
