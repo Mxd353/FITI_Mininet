@@ -249,75 +249,70 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                 _add(commands[e], names, 'vxlan_map', 'vxlan_decap',
                      [network.id], [e_ports[s1]])
 
-        # S1: E-facing trunk, cloud access ports; parallel VLANs allowed.
+        # S1: one trunk port to the single site cloud host.  VLAN tags
+        # distinguish all parallel-network slices on that host.
         _add_port(commands[s1], names, s1_ports[e], 'set_trunk', 'set_trunk')
         _add(commands[s1], names, 'uplink_filter', 'allow_parallel',
              [s1_ports[e]])
+        cloud = cloud_name(site)
+        cloud_port = s1_ports[cloud]
+        _add_port(commands[s1], names, cloud_port, 'set_trunk', 'set_trunk')
         for network in cfg.networks_for_site(site):
-            host = cloud_name(site, network)
-            port = s1_ports[host]
-            _add_port(commands[s1], names, port, 'set_access', 'set_access',
-                      network.vlan)
             _add(commands[s1], names, 'vlan_map', 'map_l2',
                  [network.vlan])
             _add(commands[s1], names, 'l2_fib', 'forward_l2',
-                 [network.vlan, macs[site.abbr]['clouds'][network.id]], [port])
+                 [network.vlan, macs[site.abbr]['clouds'][network.id]],
+                 [cloud_port])
             _add(commands[s1], names, 'l2_fib', 'forward_l2',
                  [network.vlan, macs[site.abbr]['e_s1']], [s1_ports[e]])
             if network.vpn == 'l2':
                 for remote_site in cfg.network_sites(network):
                     if remote_site.id == site.id:
                         continue
-                    peer_mac = _host_mac(
-                        net.get(cloud_name(remote_site, network)),
-                        s1_name(remote_site))
+                    peer_mac = macs[remote_site.abbr]['clouds'][network.id]
                     _add(commands[s1], names, 'l2_fib', 'forward_l2',
                          [network.vlan, peer_mac], [s1_ports[e]])
                 if cfg.l2_tunnel == 'srv6':
-                    cloud_ports = [port]
                     group_id = network.vlan * 2
                     _add_mc_group(commands[s1], groups[s1], group_id,
-                                  [(0, cloud_ports + [s1_ports[e]])])
+                                  [(0, [cloud_port, s1_ports[e]])])
                     _add_mc_group(commands[s1], groups[s1], group_id + 1,
-                                  [(0, cloud_ports)])
+                                  [(0, [cloud_port])])
                     _add(commands[s1], names, 'l2_bum', 'set_l2_bum',
-                         [network.vlan, port], [group_id])
+                         [network.vlan, cloud_port], [group_id])
                     _add(commands[s1], names, 'l2_bum', 'set_l2_bum',
                          [network.vlan, s1_ports[e]], [group_id + 1])
 
-        # S2: A-facing trunk, cloud access ports; parallel VLANs denied.
+        # S2: one trunk port to the same cloud host; parallel VLANs still
+        # cannot cross the A uplink.
         _add_port(commands[s2], names, s2_ports[a], 'set_trunk', 'set_trunk')
         _add(commands[s2], names, 'uplink_filter', 'deny_parallel',
              [s2_ports[a]])
+        cloud_s2_port = s2_ports[cloud]
+        _add_port(commands[s2], names, cloud_s2_port, 'set_trunk', 'set_trunk')
         for network in cfg.networks_for_site(site):
-            host = cloud_name(site, network)
-            port = s2_ports[host]
-            _add_port(commands[s2], names, port, 'set_access', 'set_access',
-                      network.vlan)
             _add(commands[s2], names, 'vlan_map', 'map_l2',
                  [network.vlan])
             _add(commands[s2], names, 'l2_fib', 'forward_l2',
-                 [network.vlan, _host_mac(net.get(host), s2)], [port])
+                 [network.vlan, macs[site.abbr]['clouds'][network.id]],
+                 [cloud_s2_port])
             _add(commands[s2], names, 'l2_fib', 'forward_l2',
                  [network.vlan, _host_mac(net.get(a), s2)], [s2_ports[a]])
             if network.vpn == 'l2':
                 for remote_site in cfg.network_sites(network):
                     if remote_site.id == site.id:
                         continue
-                    peer_mac = _host_mac(
-                        net.get(cloud_name(remote_site, network)),
-                        s2_name(remote_site))
+                    peer_mac = macs[remote_site.abbr]['clouds'][network.id]
                     _add(commands[s2], names, 'l2_fib', 'forward_l2',
                          [network.vlan, peer_mac], [s2_ports[a]])
                 if cfg.l2_tunnel == 'srv6':
-                    cloud_ports = [port]
                     group_id = network.vlan * 2
                     _add_mc_group(commands[s2], groups[s2], group_id,
-                                  [(0, cloud_ports)])
+                                  [(0, [cloud_s2_port])])
                     _add_mc_group(commands[s2], groups[s2], group_id + 1,
-                                  [(0, cloud_ports)])
+                                  [(0, [cloud_s2_port])])
                     _add(commands[s2], names, 'l2_bum', 'set_l2_bum',
-                         [network.vlan, port], [group_id])
+                         [network.vlan, cloud_s2_port], [group_id])
                     _add(commands[s2], names, 'l2_bum', 'set_l2_bum',
                          [network.vlan, s2_ports[a]], [group_id + 1])
 
@@ -342,7 +337,23 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
 
 
 def _set_addr(host, intf, address):
-    host.cmd('ip -6 addr replace %s dev %s' % (address, intf.name))
+    name = intf.name if hasattr(intf, 'name') else str(intf)
+    host.cmd('ip -6 addr replace %s dev %s' % (address, name))
+
+
+def _configure_cloud_interfaces(net, cfg):
+    """Create one VLAN subinterface per slice on the single site cloud host."""
+    for site in cfg.sites:
+        cloud = net.get(cloud_name(site))
+        parent = _host_intf(cloud, s1_name(site))
+        for network in cfg.networks_for_site(site):
+            ifname = cfg.vlan_ifname(network)
+            cloud.cmd('ip link del %s 2>/dev/null || true' % ifname)
+            cloud.cmd('ip link add link %s name %s type vlan id %d'
+                      % (parent.name, ifname, network.vlan))
+            cloud.cmd('ip link set dev %s address %s'
+                      % (ifname, cfg.cloud_mac(network, site)))
+            cloud.cmd('ip link set dev %s up' % ifname)
 
 
 def _configure_addresses(net, cfg):
@@ -350,7 +361,7 @@ def _configure_addresses(net, cfg):
     bj = cfg.site('bj')
     c_bj = net.get(c_name(bj))
 
-    # Beijing-centred core links: C_bj -- C_sh/C_gz/C_cd.
+    # Beijing-centred core links: C_bj -- all other site C routers.
     for site in cfg.sites:
         if site.abbr == bj.abbr:
             continue
@@ -382,13 +393,10 @@ def _configure_addresses(net, cfg):
               '2001:255:0:100::2000/64')
 
     for site in cfg.sites:
+        cloud = net.get(cloud_name(site))
         for network in cfg.networks_for_site(site):
-            cloud = net.get(cloud_name(site, network))
-            _set_addr(cloud, _host_intf(cloud, s1_name(site)),
+            _set_addr(cloud, cfg.vlan_ifname(network),
                       cfg.cloud_address(network, site) + '/64')
-            if network.vpn == 'l3':
-                _set_addr(cloud, _host_intf(cloud, s2_name(site)),
-                          cfg.cloud_address(network, site, 0x11) + '/64')
 
 
 def _core_next(net, cfg, site, target):
@@ -467,28 +475,56 @@ def _configure_routers(net, cfg, macs):
             c.cmd('ip -6 route replace %s via %s dev %s'
                   % (cfg.underlay_network(target), next_hop, intf.name))
 
+        cloud = net.get(cloud_name(site))
+        l3_interfaces = []
         for network in cfg.networks_for_site(site):
-            cloud = net.get(cloud_name(site, network))
-            s1 = s1_name(site)
-            intf = _host_intf(cloud, s1)
+            ifname = cfg.vlan_ifname(network)
             if network.vpn == 'l3':
                 gateway = cfg.cloud_gateway(network, site)
                 e_mac = macs[site.abbr]['e_s1']
                 cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                          % (gateway, e_mac, intf.name))
-                cloud.cmd('ip -6 route replace default via %s dev %s'
-                          % (gateway, intf.name))
+                          % (gateway, e_mac, ifname))
+                table_id = 20000 + network.id
+                cloud.cmd('ip -6 route replace %s dev %s table %d'
+                          % (cfg.business_network(network, site),
+                             ifname, table_id))
+                cloud.cmd('ip -6 route replace default via %s dev %s src %s '
+                          'table %d' % (gateway, ifname,
+                                        cfg.cloud_address(network, site),
+                                        table_id))
+                # Select the per-slice routing table by source and by the
+                # destination /48.  The source rule keeps a packet sourced
+                # from one slice from leaking into another slice's table.
+                cloud.cmd('ip -6 rule add from %s table %d priority %d'
+                          % (cfg.cloud_address(network, site), table_id,
+                             10000 + network.id))
+                cloud.cmd('ip -6 rule add to 240a:a806:%d::/48 table %d '
+                          'priority %d' % (network.id, table_id,
+                                          20000 + network.id))
+                l3_interfaces.append((network, gateway, ifname))
             else:
+                table_id = 30000 + network.id
+                cloud.cmd('ip -6 route replace %s dev %s table %d'
+                          % (cfg.l2_network(network), ifname, table_id))
+                cloud.cmd('ip -6 rule add from %s table %d priority %d'
+                          % (cfg.cloud_address(network, site), table_id,
+                             10000 + network.id))
                 for remote_site in cfg.network_sites(network):
                     if remote_site.id == site.id:
                         continue
                     remote_addr = cfg.cloud_address(network, remote_site)
-                    remote_mac = _host_mac(
-                        net.get(cloud_name(remote_site, network)),
-                        s1_name(remote_site))
+                    remote_mac = macs[remote_site.abbr]['clouds'][network.id]
                     cloud.cmd(
                         'ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                        % (remote_addr, remote_mac, intf.name))
+                        % (remote_addr, remote_mac, ifname))
+
+        # A single main-table default keeps public/other traffic usable.
+        # L3 destinations are overridden by the per-network rules above.
+        if l3_interfaces:
+            network, gateway, ifname = l3_interfaces[0]
+            cloud.cmd('ip -6 route replace default via %s dev %s src %s'
+                      % (gateway, ifname,
+                         cfg.cloud_address(network, site)))
 
 
 def _site_macs(net, cfg):
@@ -497,8 +533,7 @@ def _site_macs(net, cfg):
             'e_s1': _switch_mac(net, e_name(site), s1_name(site)),
             'e_c': _switch_mac(net, e_name(site), c_name(site)),
             'clouds': {
-                network.id: _host_mac(net.get(cloud_name(site, network)),
-                                      s1_name(site))
+                network.id: cfg.cloud_mac(network, site)
                 for network in cfg.networks_for_site(site)
             },
         }
@@ -547,6 +582,7 @@ def _configure_public(net, cfg):
 
 def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
     names = runtime_names(json_path or cfg.p4_json)
+    _configure_cloud_interfaces(net, cfg)
     switch_ports = _port_maps(net, cfg)
     macs = _site_macs(net, cfg)
 

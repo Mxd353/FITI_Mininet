@@ -14,7 +14,8 @@ from fiti.p4_mininet import P4Host
 from parallel.config import ParallelConfig
 from parallel.p4 import compile_p4
 from parallel.switch import make_switch_factory
-from parallel.topology import ParallelTopology, a_name, c_name
+from parallel.topology import (ParallelTopology, a_name, c_name,
+                               switch_ids)
 
 
 def configure_forwarding(net, cfg):
@@ -42,7 +43,8 @@ def build_parallel_net(cfg: ParallelConfig, json_path=None,
     factory = make_switch_factory(
         json_path, base,
         p4_log_level=cfg.p4_log_level,
-        log_dir=log_dir)
+        log_dir=log_dir,
+        switch_ids=switch_ids(cfg))
     net = Mininet(topo=topo, switch=factory, host=P4Host,
                   controller=None, link=TCLink,
                   autoSetMacs=True, build=False)

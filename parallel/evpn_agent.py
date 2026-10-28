@@ -230,9 +230,8 @@ class ParallelEvpnAgent:
                                      [network.vlan, route.mac]))
                 ops.append(self._del(s2, 'l2_fib',
                                      [network.vlan, route.mac]))
-                intf = _host_intf(cloud, s1)
                 cloud.cmd('ip -6 neigh del %s dev %s'
-                          % (route.ip, intf.name))
+                          % (route.ip, self.cfg.vlan_ifname(network)))
             else:
                 c = c_name(site)
                 ops.append(self._cmd(
@@ -246,9 +245,9 @@ class ParallelEvpnAgent:
                 ops.append(self._cmd(s2, 'l2_fib', 'forward_l2',
                                      [network.vlan, route.mac],
                                      [s2_ports[a_name(site)]]))
-                intf = _host_intf(cloud, s1)
                 cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                          % (route.ip, route.mac, intf.name))
+                          % (route.ip, route.mac,
+                             self.cfg.vlan_ifname(network)))
         return ops
 
     def _apply_l2(self, route, delete=False):

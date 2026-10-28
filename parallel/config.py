@@ -80,8 +80,17 @@ class ParallelConfig:
             '240a:a806:%d:%d::/64' % (network.id, site.id))
 
     def l2_network(self, network: Network) -> ipaddress.IPv6Network:
-        """L2VPN uses one flat /64 so both sites share a broadcast domain."""
+        """L2VPN uses one flat /64 so all member sites share a broadcast domain."""
         return ipaddress.IPv6Network('240a:a806:%d:1::/64' % network.id)
+
+    def vlan_ifname(self, network: Network) -> str:
+        """Short Linux VLAN subinterface name inside the cloud netns."""
+        return 'v%d' % network.vlan
+
+    def cloud_mac(self, network: Network, site: Site) -> str:
+        """Deterministic per-slice MAC on the single cloud host."""
+        return '02:00:%02x:%02x:00:01' % (int(site.id) & 0xff,
+                                          int(network.id) & 0xff)
 
     def srv6_sid(self, network: Network, site: Site) -> str:
         """Per-site, per-network SRv6 SID used by the static L3VPN PE."""

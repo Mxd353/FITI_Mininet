@@ -93,8 +93,24 @@ requirements-p4runtime.txt  P4Runtime Python 依赖
 
 ## 并行网络仿真
 
-中关村主干网并行网络场景是独立子项目，默认启动北京/上海/广州/成都四个站点；
-L3VPN 和 L2VPN 均覆盖四个站点。
+中关村主干网并行网络场景扩展到 FITI 的 41 个站点。每个站点只有一台云服务器，
+通过 S1 trunk 上的 802.1Q VLAN 子接口区分不同并行网络切片。
+
+```text
+每站点：
+C — E — S1 — cloud（一台主机，多个 VLAN 子接口）
+C — A — S2 — cloud
+```
+
+当前规模：
+
+```text
+41 个站点
+123 台 BMv2（每站点 E/S1/S2）
+125 个 Linux netns（每站点 C/A/cloud + 公网边界）
+4 个并行网络（2 个 L3VPN + 2 个 L2VPN）
+```
+
 详细设计见 [docs/PARALLEL_NETWORK_DESIGN.md](docs/PARALLEL_NETWORK_DESIGN.md)。
 
 ```bash
@@ -118,36 +134,55 @@ make parallel-run-no-cli
 
 - `E`/`S1`/`S2` 使用 BMv2 + P4；
 - `C`/`A`/云服务器/公网边界使用 Linux netns；
-- 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN，均覆盖四站点；默认使用静态 SRv6，VXLAN 保留为回退；
-- L3VPN 核心采用北京星型拓扑：C_bj 直连 C_sh/C_gz/C_cd；
-- L2VPN 使用扁平 /64 模拟跨站点广播域；BUM 通过 E 的 multicast group + egress_rid 复制到多个远端 SID；
-- L3VPN/L2VPN 使用静态 SRv6 SID；C2/FIX 使用静态公网路由；
-- EVPN 路由模型（IP Prefix、MAC/IP、IMET）已接入表项生成；真实 BGP/EVPN 协议后续接入；
-- S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN。
+- 云服务器每站点一台，使用 `v3501`～`v3504` 等 VLAN 子接口区分切片；
+- S1/S2 到云服务器是 trunk 端口；
+- L3VPN 与 L2VPN 均覆盖全部 41 个站点；
+- L3VPN 核心采用北京星型拓扑；
+- L2VPN 使用扁平 /64，BUM 通过 multicast group + egress_rid 复制到远端 SID；
+- C2/FIX 公网接入仍是静态路由；
+- EVPN 路由模型和动态更新 agent 已实现，真实 BGP/EVPN 后续接入。
 
-`configs/parallel.json` 的每个网络可用 `sites` 指定成员站点；缺省表示所有
-站点。当前网络 1/2（L3VPN）和网络 3/4（L2VPN）均为四站点。
+`configs/parallel.json` 的每个网络可用 `sites` 指定成员站点；当前扩展配置
+为了覆盖所有节点，4 个网络都选择了全部 41 个站点。
 
-### EVPN 路由模型（第一阶段）
+### 云服务器的切片接口
+
+云服务器不再为每个网络创建独立主机，而是：
+
+```text
+cl_bj
+├── eth0                 -> S1 trunk
+├── eth1                 -> S2 trunk
+├── v3501                -> 网络 1
+├── v3502                -> 网络 2
+├── v3503                -> 网络 3
+└── v3504                -> 网络 4
+```
+
+L3 网络使用按目的前缀分流的策略路由表；L2 网络使用各 VLAN 子接口和静态远端
+邻居。云服务器 MAC 按 `(站点, 网络)` 确定性生成。
+
+### EVPN 路由模型
 
 `parallel/evpn.py` 生成 EVPN 路由对象，并通过 `RouteTable` 提供
-advertise/withdraw 事件，供后续 FRR/ExaBGP 适配器接入：
+advertise/withdraw 事件：
 
 ```bash
-# 本地路由模型（无 netns 时只有 L3 Prefix + L2 IMET）
 make parallel-evpn-dump
-
-# 导出 JSON，供控制面适配器或测试使用
 python3 parallel_evpn.py --json /tmp/evpn-routes.json
 ```
 
-当前免 root 输出 16 条本地路由（8 条 L3 IP Prefix、8 条 L2 IMET）；
-Mininet 启动后会补充 8 条云服务器 MAC/IP 路由，共 24 条。
-L3VPN 的 `l3_fib`/`local_sid` 和 L2VPN 的 SRv6 隧道/解封装已经由这些
-路由对象驱动，其余 VLAN、L2 FIB 和公网表项仍由静态控制面生成。
+41 站点免 root 输出：
 
-这是路由模型，不是 BGP 有限状态机；尚未实现 Route Reflector、EVPN
-NLRI 编解码和真实 BGP 会话。
+```text
+82 条 L3 IP Prefix
+82 条 L2 IMET
+共 164 条本地路由
+```
+
+Mininet 启动后增加 82 条云服务器 MAC/IP 路由，共 246 条。
+
+真实 BGP EVPN 控制面仍未实现。
 
 ### 动态路由更新 agent
 
@@ -164,7 +199,7 @@ python3 parallel_evpn_ctl.py status
 python3 parallel_evpn_ctl.py dump
 ```
 
-动态增加一条 L3 IP Prefix 路由（示例前缀只用于演示）：
+动态增加一条 L3 IP Prefix 路由：
 
 ```bash
 cat >/tmp/evpn-route.json <<'JSON'
@@ -172,11 +207,11 @@ cat >/tmp/evpn-route.json <<'JSON'
   "type": "ip-prefix",
   "rd": "9425:1",
   "rt": ["9425:1"],
-  "prefix": "240a:a806:1:3:abcd::/80",
+  "prefix": "240a:a806:1:5:abcd::/80",
   "vni": 1,
-  "sid": "fd00:0:3:1::101",
-  "origin": "gz",
-  "next_hop": "fd00:0:3:1::101"
+  "sid": "fd00:0:5:1::101",
+  "origin": "xa",
+  "next_hop": "fd00:0:5:1::101"
 }
 JSON
 python3 parallel_evpn_ctl.py advertise --file /tmp/evpn-route.json
@@ -184,49 +219,54 @@ python3 parallel_evpn_ctl.py withdraw --file /tmp/evpn-route.json
 ```
 
 agent 支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；IMET/BUM multicast group
-仍由静态控制面安装。使用 `--no-evpn-agent` 可以关闭 agent，使用
-`--evpn-socket PATH` 可以修改 socket 路径。
+仍由静态控制面安装。
 
-公网接入验证：
+### 验证示例
+
+公网：
 
 ```text
-cloud_bj_1 ping6 -c 3 2001:255:0:100::2000
-cloud_sh_1 ping6 -c 3 2001:255:0:100::2000
-cloud_gz_1 ping6 -c 3 2001:255:0:100::2000
-cloud_cd_1 ping6 -c 3 2001:255:0:100::2000
+cl_bj ping6 -c 3 -I v3501 2001:255:0:100::2000
+cl_sh ping6 -c 3 -I v3501 2001:255:0:100::2000
 fix ping6 -c 3 240a:a806:1:1::10
-fix ping6 -c 3 240a:a806:1:3::10
-fix ping6 -c 3 240a:a806:2:4::10
 ```
 
-四站点 L3VPN 与 L2VPN 回归：
+L3VPN：
 
 ```text
-# L3VPN，网络 1：北京 -> 上海/广州/成都
-cloud_bj_1 ping6 -c 3 240a:a806:1:2::10
-cloud_bj_1 ping6 -c 3 240a:a806:1:3::10
-cloud_bj_1 ping6 -c 3 240a:a806:1:4::10
+# 北京网络 1 -> 上海/广州/成都/西安
+cl_bj ping6 -c 3 -I v3501 240a:a806:1:2::10
+cl_bj ping6 -c 3 -I v3501 240a:a806:1:3::10
+cl_bj ping6 -c 3 -I v3501 240a:a806:1:4::10
+cl_bj ping6 -c 3 -I v3501 240a:a806:1:5::10
 
-# L3VPN，网络 2：成都 -> 北京/上海/广州
-cloud_cd_2 ping6 -c 3 240a:a806:2:1::10
-cloud_cd_2 ping6 -c 3 240a:a806:2:2::10
-cloud_cd_2 ping6 -c 3 240a:a806:2:3::10
+# 西安网络 2 -> 北京
+cl_xa ping6 -c 3 -I v3502 240a:a806:2:1::10
+```
 
-# L2VPN 四站点（bj/sh/gz/cd 的 L2 云地址分别为 ::10/::11/::12/::13）
-cloud_bj_3 ping6 -c 3 240a:a806:3:1::11
-cloud_bj_3 ping6 -c 3 240a:a806:3:1::12
-cloud_bj_3 ping6 -c 3 240a:a806:3:1::13
-cloud_gz_3 ping6 -c 3 240a:a806:3:1::10
-cloud_bj_4 ping6 -c 3 240a:a806:4:1::12
-cloud_cd_4 ping6 -c 3 240a:a806:4:1::10
+L2VPN：
 
-# 隔离：网络 1 与网络 2 应 100% 丢包
-cloud_bj_1 ping6 -c 3 240a:a806:2:3::10
+```text
+# 北京网络 3 -> 上海/广州/成都
+cl_bj ping6 -c 3 -I v3503 240a:a806:3:1::11
+cl_bj ping6 -c 3 -I v3503 240a:a806:3:1::12
+cl_bj ping6 -c 3 -I v3503 240a:a806:3:1::13
+
+# BUM 全节点组播
+cl_bj ping6 -c 3 -I v3503 ff02::1
+```
+
+隔离：
+
+```text
+cl_bj ping6 -c 3 -I v3501 240a:a806:2:5::10
+# 应 100% 丢包
 ```
 
 ## 环境要求
 
 - Linux
+- 802.1Q VLAN 支持（必要时 `sudo modprobe 8021q`）
 - Mininet 2.3+
 - p4c（`p4c-bm2-ss`）
 - bmv2（`simple_switch`、`simple_switch_grpc`、`simple_switch_CLI`）

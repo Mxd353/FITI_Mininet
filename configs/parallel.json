@@ -20,6 +20,191 @@
             "id": 4,
             "abbr": "cd",
             "name": "成都"
+        },
+        {
+            "id": 5,
+            "abbr": "xa",
+            "name": "西安"
+        },
+        {
+            "id": 6,
+            "abbr": "nj",
+            "name": "南京"
+        },
+        {
+            "id": 7,
+            "abbr": "sy",
+            "name": "沈阳"
+        },
+        {
+            "id": 8,
+            "abbr": "wh",
+            "name": "武汉"
+        },
+        {
+            "id": 9,
+            "abbr": "pku",
+            "name": "北大"
+        },
+        {
+            "id": 10,
+            "abbr": "bupt",
+            "name": "北邮"
+        },
+        {
+            "id": 11,
+            "abbr": "buaa",
+            "name": "北航"
+        },
+        {
+            "id": 12,
+            "abbr": "fudan",
+            "name": "复旦"
+        },
+        {
+            "id": 13,
+            "abbr": "tongji",
+            "name": "同济"
+        },
+        {
+            "id": 14,
+            "abbr": "tjn",
+            "name": "天津"
+        },
+        {
+            "id": 15,
+            "abbr": "hef",
+            "name": "合肥"
+        },
+        {
+            "id": 16,
+            "abbr": "xmn",
+            "name": "厦门"
+        },
+        {
+            "id": 17,
+            "abbr": "chq",
+            "name": "重庆"
+        },
+        {
+            "id": 18,
+            "abbr": "lzh",
+            "name": "兰州"
+        },
+        {
+            "id": 19,
+            "abbr": "hrb",
+            "name": "哈尔滨"
+        },
+        {
+            "id": 20,
+            "abbr": "hzh",
+            "name": "杭州"
+        },
+        {
+            "id": 21,
+            "abbr": "chc",
+            "name": "长春"
+        },
+        {
+            "id": 22,
+            "abbr": "dln",
+            "name": "大连"
+        },
+        {
+            "id": 23,
+            "abbr": "jnn",
+            "name": "济南"
+        },
+        {
+            "id": 24,
+            "abbr": "chs",
+            "name": "长沙"
+        },
+        {
+            "id": 25,
+            "abbr": "zhz",
+            "name": "郑州"
+        },
+        {
+            "id": 26,
+            "abbr": "szh",
+            "name": "深圳"
+        },
+        {
+            "id": 27,
+            "abbr": "sjz",
+            "name": "石家庄"
+        },
+        {
+            "id": 28,
+            "abbr": "tyn",
+            "name": "太原"
+        },
+        {
+            "id": 29,
+            "abbr": "hht",
+            "name": "呼和浩特"
+        },
+        {
+            "id": 30,
+            "abbr": "fzh",
+            "name": "福州"
+        },
+        {
+            "id": 31,
+            "abbr": "nch",
+            "name": "南昌"
+        },
+        {
+            "id": 32,
+            "abbr": "qda",
+            "name": "青岛"
+        },
+        {
+            "id": 33,
+            "abbr": "nan",
+            "name": "南宁"
+        },
+        {
+            "id": 34,
+            "abbr": "hak",
+            "name": "海口"
+        },
+        {
+            "id": 35,
+            "abbr": "gyn",
+            "name": "贵阳"
+        },
+        {
+            "id": 36,
+            "abbr": "kmn",
+            "name": "昆明"
+        },
+        {
+            "id": 37,
+            "abbr": "lsa",
+            "name": "拉萨"
+        },
+        {
+            "id": 38,
+            "abbr": "xnn",
+            "name": "西宁"
+        },
+        {
+            "id": 39,
+            "abbr": "ych",
+            "name": "银川"
+        },
+        {
+            "id": 40,
+            "abbr": "wlq",
+            "name": "乌鲁木齐"
+        },
+        {
+            "id": 41,
+            "abbr": "zgc",
+            "name": "中关村"
         }
     ],
     "l2_tunnel": "srv6",
@@ -31,7 +216,44 @@
                 "bj",
                 "sh",
                 "gz",
-                "cd"
+                "cd",
+                "xa",
+                "nj",
+                "sy",
+                "wh",
+                "pku",
+                "bupt",
+                "buaa",
+                "fudan",
+                "tongji",
+                "tjn",
+                "hef",
+                "xmn",
+                "chq",
+                "lzh",
+                "hrb",
+                "hzh",
+                "chc",
+                "dln",
+                "jnn",
+                "chs",
+                "zhz",
+                "szh",
+                "sjz",
+                "tyn",
+                "hht",
+                "fzh",
+                "nch",
+                "qda",
+                "nan",
+                "hak",
+                "gyn",
+                "kmn",
+                "lsa",
+                "xnn",
+                "ych",
+                "wlq",
+                "zgc"
             ]
         },
         {
@@ -41,7 +263,44 @@
                 "bj",
                 "sh",
                 "gz",
-                "cd"
+                "cd",
+                "xa",
+                "nj",
+                "sy",
+                "wh",
+                "pku",
+                "bupt",
+                "buaa",
+                "fudan",
+                "tongji",
+                "tjn",
+                "hef",
+                "xmn",
+                "chq",
+                "lzh",
+                "hrb",
+                "hzh",
+                "chc",
+                "dln",
+                "jnn",
+                "chs",
+                "zhz",
+                "szh",
+                "sjz",
+                "tyn",
+                "hht",
+                "fzh",
+                "nch",
+                "qda",
+                "nan",
+                "hak",
+                "gyn",
+                "kmn",
+                "lsa",
+                "xnn",
+                "ych",
+                "wlq",
+                "zgc"
             ]
         },
         {
@@ -51,7 +310,44 @@
                 "bj",
                 "sh",
                 "gz",
-                "cd"
+                "cd",
+                "xa",
+                "nj",
+                "sy",
+                "wh",
+                "pku",
+                "bupt",
+                "buaa",
+                "fudan",
+                "tongji",
+                "tjn",
+                "hef",
+                "xmn",
+                "chq",
+                "lzh",
+                "hrb",
+                "hzh",
+                "chc",
+                "dln",
+                "jnn",
+                "chs",
+                "zhz",
+                "szh",
+                "sjz",
+                "tyn",
+                "hht",
+                "fzh",
+                "nch",
+                "qda",
+                "nan",
+                "hak",
+                "gyn",
+                "kmn",
+                "lsa",
+                "xnn",
+                "ych",
+                "wlq",
+                "zgc"
             ]
         },
         {
@@ -61,7 +357,44 @@
                 "bj",
                 "sh",
                 "gz",
-                "cd"
+                "cd",
+                "xa",
+                "nj",
+                "sy",
+                "wh",
+                "pku",
+                "bupt",
+                "buaa",
+                "fudan",
+                "tongji",
+                "tjn",
+                "hef",
+                "xmn",
+                "chq",
+                "lzh",
+                "hrb",
+                "hzh",
+                "chc",
+                "dln",
+                "jnn",
+                "chs",
+                "zhz",
+                "szh",
+                "sjz",
+                "tyn",
+                "hht",
+                "fzh",
+                "nch",
+                "qda",
+                "nan",
+                "hak",
+                "gyn",
+                "kmn",
+                "lsa",
+                "xnn",
+                "ych",
+                "wlq",
+                "zgc"
             ]
         }
     ],

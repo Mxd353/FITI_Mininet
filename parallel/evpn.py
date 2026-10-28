@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 from parallel.config import DEFAULT_CONFIG, ParallelConfig, load_config
-from parallel.topology import cloud_name, s1_name
 
 ROUTE_IP_PREFIX = 'ip-prefix'
 ROUTE_MAC_IP = 'mac-ip'
@@ -203,17 +202,6 @@ class RouteTable:
         return table
 
 
-def _host_mac(host, peer_name):
-    for intf in host.intfs.values():
-        link = intf.link
-        if link is None:
-            continue
-        peer = link.intf2 if link.intf1 is intf else link.intf1
-        if peer is not None and peer.node.name == peer_name:
-            return intf.MAC()
-    raise RuntimeError('%s 没有连接到 %s 的接口' % (host.name, peer_name))
-
-
 def build_evpn_routes(cfg: ParallelConfig, net=None,
                       include_l2_mac=True) -> RouteTable:
     """Build local EVPN routes for all configured sites.
@@ -243,12 +231,9 @@ def build_evpn_routes(cfg: ParallelConfig, net=None,
                 rd=rd, rt=rt, vni=network.id, sid=sid,
                 origin=site.abbr))
             if net is not None and include_l2_mac:
-                host = net.get(cloud_name(site, network))
-                if host is None:
-                    continue
                 table.advertise(EvpnMacIpRoute(
                     rd=rd, rt=rt,
-                    mac=_host_mac(host, s1_name(site)),
+                    mac=cfg.cloud_mac(network, site),
                     ip=cfg.cloud_address(network, site),
                     vni=network.id, sid=sid, origin=site.abbr,
                     next_hop=sid))

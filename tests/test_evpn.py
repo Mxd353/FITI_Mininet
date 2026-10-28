@@ -15,11 +15,11 @@ class EvpnRouteModelTest(unittest.TestCase):
         self.table = build_evpn_routes(self.cfg)
 
     def test_local_route_counts(self):
-        # L3: 2 networks x 4 sites; L2: 2 networks x 4 sites.
-        self.assertEqual(len(self.table.l3_routes()), 8)
-        self.assertEqual(len(self.table.imet_routes()), 8)
+        # L3: 2 networks x 41 sites; L2: 2 networks x 41 sites.
+        self.assertEqual(len(self.table.l3_routes()), 82)
+        self.assertEqual(len(self.table.imet_routes()), 82)
         self.assertEqual(len(self.table.mac_ip_routes()), 0)
-        self.assertEqual(len(self.table.routes), 16)
+        self.assertEqual(len(self.table.routes), 164)
 
     def test_route_validation(self):
         self.assertEqual(validate_evpn_routes(self.table), [])

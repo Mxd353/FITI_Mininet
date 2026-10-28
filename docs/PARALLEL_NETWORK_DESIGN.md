@@ -6,9 +6,10 @@
 
 当前执行状态：
 
-- 已完成北京/上海/广州/成都四站点拓扑、`parallel/` 子项目、BMv2 P4 程序；
-- 网络 1/2 为 L3VPN，四站点使用静态 SRv6 封装/解封装；
-- 网络 3/4 为 L2VPN，四站点使用静态 SRv6，VXLAN 保留为回退模式；
+- 已完成 41 站点拓扑、`parallel/` 子项目、BMv2 P4 程序；
+- 每站点一台云服务器，用 VLAN 子接口区分并行网络切片；
+- 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN，均覆盖全部站点；
+- L3VPN/L2VPN 使用静态 SRv6，VXLAN 保留为回退模式；
 - C2/FIX 公网接入已用静态路由实现；
 - EVPN 路由模型已实现并驱动部分静态表项，真实 BGP/EVPN 控制面尚未实现。
 
@@ -161,7 +162,7 @@ Python 控制面           负责生成并下发静态 P4 表项
 | S2_bj / S2_sh / S2_gz / S2_cd | BMv2 + P4 | 站点接入交换机，上行拒绝并行网络 VLAN |
 | C_bj / C_sh / C_gz / C_cd | Linux netns | 传统核心路由器，IPv6 转发/静态路由 |
 | A_bj / A_sh / A_gz / A_cd | Linux netns | 传统汇聚路由器 |
-| cloud-* | Linux netns | 云计算服务器 |
+| cl-* | Linux netns | 云计算服务器 |
 | pub_border / fix | Linux netns | 公网边界，BGP/静态路由、前缀过滤；`pub_border` 是短名，避免接口名超过 15 字符 |
 
 这样：
@@ -182,29 +183,31 @@ Python 控制面           负责生成并下发静态 P4 表项
 
 ## 3. 仿真拓扑
 
-### 3.1 北京/上海/广州/成都四站点
+### 3.1 41 站点拓扑
 
 ```text
-                         pub_border / FIX
-                                |
-                             C_bj (C2, hub)
-                          /      |      \
-                    C_sh       C_gz      C_cd
-                     |          |          |
-                E_sh/A_sh   E_gz/A_gz   E_cd/A_cd
-                 /     \     /     \     /     \
-              S1/S2  cloud S1/S2 cloud S1/S2 cloud
+                    pub_border / FIX
+                           |
+                        C_bj (hub)
+          /        /       |       \        \
+       C_sh     C_xa     C_nj ... C_wlq   C_zgc
+        |        |        |         |       |
+   E/A/S1/S2  E/A/S1/S2  ...      ...     ...
+        |        |        |         |       |
+      cloud    cloud    cloud     cloud   cloud
+       (一台主机，v3501~v3504 VLAN 子接口)
 ```
 
-每个站点内部保持 PDF 的 `C -> E -> S1` 和 `C -> A -> S2` 分支；云服务器
-在 S1/S2 之间双归。核心采用北京星型拓扑：
+每个站点内部保持 PDF 的 `C -> E -> S1` 和 `C -> A -> S2` 分支。当前扩展
+配置使用北京星型核心：
 
-- `C_bj` 直连 `C_sh`、`C_gz`、`C_cd`；
-- 上海/广州/成都访问其他站点时经 `C_bj` 转发；
+- `C_bj` 直连其余 40 个站点的 `C`；
+- 非北京站点访问其他站点时经 `C_bj` 转发；
 - `C_bj` 同时连接公网边界；
-- L3VPN 网络 1/2 覆盖四个站点；
-- L2VPN 网络 3/4 覆盖四个站点；已知单播按远端 MAC 选择 SID，BUM 使用
-  E 的 multicast group + egress_rid 做 ingress replication。
+- 每站点只有一台云服务器，通过 S1/S2 trunk 上的 VLAN 子接口区分切片；
+- L3VPN 网络 1/2 覆盖全部 41 站点；
+- L2VPN 网络 3/4 覆盖全部 41 站点；已知单播按远端 MAC 选择 SID，BUM
+  使用 E 的 multicast group + egress_rid 做 ingress replication。
 
 ### 3.2 双归与 VLAN 策略
 
@@ -231,9 +234,12 @@ PDF 标注 S1/S2 到云服务器有 `M-LA`、`G` 两类链路，但未给出链�
 上海 = 站点 ID 2
 广州 = 站点 ID 3
 成都 = 站点 ID 4
+其余站点 = 站点 ID 5～41
 ```
 
-上海站点 ID 2 与 PDF 示例一致；广州/成都用于四站点 L3VPN 扩展。
+上海站点 ID 2 与 PDF 示例一致；其余站点按扩展配置编号，具体见
+`configs/parallel.json`。每个站点只有一台云服务器，切片通过 VLAN
+子接口区分。
 
 ### 4.2 通用公式
 
@@ -249,10 +255,10 @@ VLAN              = 并行网络 ID + 3500
 
 | 网络 ID | VLAN | 用途 | 覆盖站点 | 业务地址 |
 | --- | --- | --- | --- | --- |
-| 1 | 3501 | L3VPN | 北京/上海/广州/成都 | `240a:a806:1:{站点 ID}::/64` |
-| 2 | 3502 | L3VPN | 北京/上海/广州/成都 | `240a:a806:2:{站点 ID}::/64` |
-| 3 | 3503 | L2VPN | 北京/上海/广州/成都 | `240a:a806:3:1::/64`（扁平） |
-| 4 | 3504 | L2VPN | 北京/上海/广州/成都 | `240a:a806:4:1::/64`（扁平） |
+| 1 | 3501 | L3VPN | 全部 41 站点 | `240a:a806:1:{站点 ID}::/64` |
+| 2 | 3502 | L3VPN | 全部 41 站点 | `240a:a806:2:{站点 ID}::/64` |
+| 3 | 3503 | L2VPN | 全部 41 站点 | `240a:a806:3:1::/64`（扁平） |
+| 4 | 3504 | L2VPN | 全部 41 站点 | `240a:a806:4:1::/64`（扁平） |
 
 互联地址：
 
@@ -327,7 +333,7 @@ Ethernet -> VLAN -> IPv6 -> UDP -> VXLAN -> inner Ethernet -> inner VLAN -> inne
 以网络 ID 300、上海站点（站点 ID 2）为例：
 
 ```text
-cloud_sh(240a:a806:300:2::10)
+cl_sh(240a:a806:300:2::10)
   -> S1_sh access VLAN 3800
   -> E_sh P4: vlan_map(3800) -> vrf=300
   -> l3_fib(vrf=300, 240a:a806:300:1::/64)
@@ -335,7 +341,7 @@ cloud_sh(240a:a806:300:2::10)
   -> C_sh/C_bj 或 E 之间的 underlay 转发
   -> E_bj P4: vrf=300
   -> l3_fib(vrf=300, 240a:a806:300:1::/64) 本地云服务器
-  -> S1_bj -> cloud_bj
+  -> S1_bj -> cl_bj
 ```
 
 北京到上海的反向路径同理。
@@ -355,16 +361,16 @@ l3_fib:   (300, 240a:a806:300:2::/64) -> E_sh 下一跳
 以网络 ID 300、VLAN 3800 为例：
 
 ```text
-cloud_sh
+cl_sh
   -> S1_sh access VLAN 3800
   -> E_sh P4: vlan_map(3800) -> l2vpn, vsi=300
   -> l2_fib(vlan=3800, dst_mac)
   -> 远端 MAC：SRv6 封装到 E_bj 的 locator
   -> E_bj 解封装
-  -> l2_fib 本地 MAC -> S1_bj -> cloud_bj
+  -> l2_fib 本地 MAC -> S1_bj -> cl_bj
 ```
 
-四站点扩展后，E 的 `l2_tunnel` 以 `(VLAN, 目的 MAC)` 为键选择远端 SID；
+多站点扩展后，E 的 `l2_tunnel` 以 `(VLAN, 目的 MAC)` 为键选择远端 SID；
 已知单播直接查表，广播/组播/未知单播进入 `l2_bum` 表，按 VLAN 和入端口
 选择 multicast group。E 为每个远端站点创建一个 multicast node（相同 C
 端口、不同 rid）；egress 的 `l2_rep_sid` 按 rid 选择远端 SID，从而完成
@@ -423,8 +429,8 @@ make parallel-evpn-dump
 python3 parallel_evpn.py --json /tmp/evpn-routes.json
 ```
 
-免 root 模式输出 16 条本地路由（8 条 IP Prefix + 8 条 IMET）；Mininet
-启动后增加 8 条云服务器 MAC/IP 路由，共 24 条。
+免 root 模式输出 164 条本地路由（82 条 IP Prefix + 82 条 IMET）；Mininet
+启动后增加 82 条云服务器 MAC/IP 路由，共 246 条。
 
 ### 9.2 动态路由更新 agent
 
@@ -455,7 +461,7 @@ python3 parallel_evpn_ctl.py withdraw --file /tmp/evpn-route.json
 - BMv2 只负责数据平面，不能单独完成 EVPN/BGP 控制面。
 
 推荐接入顺序：先用 `RouteTable`/agent 在北京/上海验证路由增删/撤销；
-再验证北京/上海/广州/成都四站点 L3VPN/L2VPN；最后接入 FRR/ExaBGP 并
+再验证 41 站点 L3VPN/L2VPN；最后接入 FRR/ExaBGP 并
 批量生成 41 个站点配置。当前路由模型和 agent 不包含 BGP FSM、Route
 Reflector 和 EVPN NLRI 编解码。
 
@@ -479,7 +485,7 @@ Reflector 和 EVPN NLRI 编解码。
 
 - 配置网络 1/2 的 VRF；
 - 安装 L3 路由和下一跳；
-- 验证北京/上海/广州/成都同网络互通；
+- 验证 41 站点同网络互通；
 - 验证网络 1 与网络 2 隔离。
 
 ### 阶段 3：L2VPN
@@ -522,7 +528,7 @@ ping6 -c 3 <peer>
 
 ### 11.3 L3VPN
 
-- 北京/上海/广州/成都同网络 `ping6` 成功；
+- 41 站点同网络 `ping6` 成功；
 - 不同网络 `ping6` 失败；
 - 检查 `vrf`/`l3_fib` 表项；
 - `traceroute6` 验证跨站点路径。
@@ -580,5 +586,5 @@ docs/PARALLEL_NETWORK_DESIGN.md
 - `fiti/p4.py`：P4 编译、端口映射；
 - `fiti/log.py`：日志和进度。
 
-首期实现北京/上海/广州/成都四站点、网络 1/2 的 L3VPN 和网络 3/4 的 L2VPN；
+首期实现 41 站点、网络 1/2 的 L3VPN 和网络 3/4 的 L2VPN；
 公网和 EVPN/SRv6 控制面按阶段推进。
