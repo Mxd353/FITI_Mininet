@@ -66,6 +66,7 @@ configs/
 docs/
 ├── SLICING_DESIGN.md       切片与 P4 数据平面设计
 ├── PARALLEL_NETWORK_DESIGN.md  中关村并行网络仿真设计
+├── 中关村主干网并行网络设计方案.pdf  原始设计方案
 └── fiti_topology.svg       平面拓扑图
 
 parallel/                   并行网络仿真子项目
