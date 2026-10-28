@@ -9,7 +9,7 @@
 
 ```text
 main                        基础多切片
-feature/parallel-network    41 站点并行网络当前实现
+- feature/parallel-network    41 站点并行网络当前实现
 feature/parallel-41-switch  41 台站点交换机的未来实现分支
 ```
 
