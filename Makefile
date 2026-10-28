@@ -13,7 +13,8 @@ PARALLEL_P4INFO  = build/parallel_vpn.p4info.txt
         traffic traffic-base traffic-global \
         traffic-continuous traffic-base-continuous traffic-global-continuous \
         check check-srv6 dump clean parallel-p4 parallel-dump parallel-run \
-        parallel-evpn-dump test-evpn \
+        parallel-evpn-dump parallel-dump-min parallel-evpn-dump-min \
+        parallel-run-min parallel-run-no-cli-min test-evpn \
         parallel-run-no-cli
 
 all: p4
@@ -95,7 +96,7 @@ clean:
 	-sudo mn -c
 
 # ---------------------------------------------------------------------------
-# 并行网络仿真（北京/上海，C-E/A-S1/S2）
+# 并行网络仿真（默认 41 站点；parallel-min 为 4 站点验证子集）
 # ---------------------------------------------------------------------------
 parallel-p4:
 	@mkdir -p build
@@ -108,6 +109,13 @@ parallel-dump:
 parallel-evpn-dump:
 	python3 parallel_evpn.py --dump --validate
 
+# 4 站点最小验证子集：北京/上海/广州/成都，12 台 BMv2
+parallel-dump-min:
+	python3 parallel_net.py --config configs/parallel-min.json --dump
+
+parallel-evpn-dump-min:
+	python3 parallel_evpn.py --config configs/parallel-min.json --dump --validate
+
 test-evpn:
 	python3 -m unittest tests.test_evpn
 
@@ -116,3 +124,9 @@ parallel-run: parallel-p4
 
 parallel-run-no-cli: parallel-p4
 	sudo python3 parallel_net.py --no-cli
+
+parallel-run-min: parallel-p4
+	sudo python3 parallel_net.py --config configs/parallel-min.json
+
+parallel-run-no-cli-min: parallel-p4
+	sudo python3 parallel_net.py --config configs/parallel-min.json --no-cli

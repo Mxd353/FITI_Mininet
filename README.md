@@ -61,7 +61,8 @@ fiti/                       Python 实现包
 configs/
 ├── fiti.json               拓扑数据
 ├── slices.json             切片配置示例
-└── parallel.json           并行网络配置
+├── parallel.json           并行网络配置（41 站点）
+└── parallel-min.json       4 站点最小验证配置
 
 docs/
 ├── SLICING_DESIGN.md       切片与 P4 数据平面设计
@@ -111,6 +112,9 @@ C — A — S2 — cloud
 4 个并行网络（2 个 L3VPN + 2 个 L2VPN）
 ```
 
+`configs/parallel-min.json` 保留 4 个站点（北京/上海/广州/成都），对应
+12 台 BMv2、14 个 netns，适用于先验证 L3/L2/BUM/公网功能后再启动 41 站点。
+
 详细设计见 [docs/PARALLEL_NETWORK_DESIGN.md](docs/PARALLEL_NETWORK_DESIGN.md)。
 
 ```bash
@@ -123,11 +127,15 @@ make parallel-evpn-dump
 # 编译并行网络 P4
 make parallel-p4
 
-# 启动 Mininet/BMv2（需要 root）
+# 启动 Mininet/BMv2（需要 root，41 站点 / 123 台 BMv2）
 make parallel-run
+
+# 最小验证子集：北京/上海/广州/成都，12 台 BMv2
+make parallel-run-min
 
 # 后台模式，不进入 CLI
 make parallel-run-no-cli
+make parallel-run-no-cli-min
 ```
 
 当前阶段：
