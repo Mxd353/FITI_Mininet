@@ -64,6 +64,7 @@ configs/
 
 docs/
 ├── SLICING_DESIGN.md       切片与 P4 数据平面设计
+├── SLICES_CONFIG.md        slices.json 配置写法
 └── fiti_topology.svg       平面拓扑图
 
 p4src/fiti_slice.p4         VLAN L2 + 多段 SRv6 P4 程序
@@ -259,6 +260,8 @@ with fiti_network() as net:          # 自动清理
 | `slices[].paths`           | 可选多段路径，`src`/`dst`/`segments`                     |
 
 校验会检查 VLAN / 子网冲突、未知节点、主机名过长，以及不支持的字段。
+完整的 `slices.json` 写法、最小示例和运行时新增格式见
+[docs/SLICES_CONFIG.md](docs/SLICES_CONFIG.md)。
 
 ### SRv6 主机 overlay
 
