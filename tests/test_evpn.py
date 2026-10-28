@@ -24,6 +24,14 @@ class EvpnRouteModelTest(unittest.TestCase):
     def test_route_validation(self):
         self.assertEqual(validate_evpn_routes(self.table), [])
 
+    def test_fiti_core_topology(self):
+        self.assertEqual(len(self.cfg.fiti.links), 43)
+        self.assertEqual(self.cfg.core_next_hop(
+            self.cfg.site('bj'), self.cfg.site('sh')), 'tjn')
+        self.assertNotEqual(
+            self.cfg.core_address(self.cfg.site('bj'), self.cfg.site('tjn')),
+            self.cfg.core_address(self.cfg.site('tjn'), self.cfg.site('bj')))
+
     def test_l2_cloud_addresses_are_unique(self):
         for network in self.cfg.l2_networks():
             addresses = [self.cfg.cloud_address(network, site)

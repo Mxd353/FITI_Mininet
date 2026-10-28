@@ -12,14 +12,14 @@
             "name": "上海"
         },
         {
-            "id": 3,
-            "abbr": "gz",
-            "name": "广州"
+            "id": 14,
+            "abbr": "tjn",
+            "name": "天津"
         },
         {
-            "id": 4,
-            "abbr": "cd",
-            "name": "成都"
+            "id": 23,
+            "abbr": "jnn",
+            "name": "济南"
         }
     ],
     "l2_tunnel": "srv6",
@@ -30,8 +30,8 @@
             "sites": [
                 "bj",
                 "sh",
-                "gz",
-                "cd"
+                "tjn",
+                "jnn"
             ]
         },
         {
@@ -40,8 +40,8 @@
             "sites": [
                 "bj",
                 "sh",
-                "gz",
-                "cd"
+                "tjn",
+                "jnn"
             ]
         },
         {
@@ -50,8 +50,8 @@
             "sites": [
                 "bj",
                 "sh",
-                "gz",
-                "cd"
+                "tjn",
+                "jnn"
             ]
         },
         {
@@ -60,8 +60,8 @@
             "sites": [
                 "bj",
                 "sh",
-                "gz",
-                "cd"
+                "tjn",
+                "jnn"
             ]
         }
     ],
@@ -75,5 +75,6 @@
         "public_prefix": "2001:255:0:100::/64",
         "public_c2": "2001:255:0:100::a806/64",
         "public_peer": "2001:255:0:100::2000"
-    }
+    },
+    "fiti_topology": "fiti.json"
 }

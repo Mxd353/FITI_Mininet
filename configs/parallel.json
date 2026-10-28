@@ -408,5 +408,6 @@
         "public_prefix": "2001:255:0:100::/64",
         "public_c2": "2001:255:0:100::a806/64",
         "public_peer": "2001:255:0:100::2000"
-    }
+    },
+    "fiti_topology": "fiti.json"
 }

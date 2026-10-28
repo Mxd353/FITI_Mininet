@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from fiti.paths import PROJECT_ROOT
+from parallel.fiti_topology import load_fiti_topology
 
 DEFAULT_CONFIG = os.path.join(PROJECT_ROOT, 'configs', 'parallel.json')
 DEFAULT_P4_JSON = os.path.join(PROJECT_ROOT, 'build', 'parallel_vpn.json')
@@ -40,6 +41,8 @@ class ParallelConfig:
     p4_json: str
     thrift_base: int
     p4_log_level: str
+    fiti_topology: str
+    fiti: object
     l2_tunnel: str = 'srv6'
     underlay: Dict[str, str] = field(default_factory=dict)
 
@@ -109,26 +112,17 @@ class ParallelConfig:
 
     def core_network(self, left: Site,
                      right: Site) -> ipaddress.IPv6Network:
-        """北京星型核心链路地址；当前只定义 hub-remote 直连。"""
-        hub = self.site('bj')
-        if left.abbr == hub.abbr:
-            peer = right
-        elif right.abbr == hub.abbr:
-            peer = left
-        else:
-            raise ValueError('核心采用北京星型拓扑，%s-%s 没有直连链路'
-                             % (left.abbr, right.abbr))
-        if peer.abbr == 'sh':
-            return ipaddress.IPv6Network('fd00:0:1:0::/64')
-        return ipaddress.IPv6Network('fd00:0:1:%d::/64' % peer.id)
+        return self.fiti.link_network(left.abbr, right.abbr)
 
     def core_address(self, local: Site, remote: Site) -> str:
-        net = self.core_network(local, remote)
-        offset = 1 if local.abbr == 'bj' else 2
-        return str(net.network_address + offset)
+        return self.fiti.core_address(local.abbr, remote.abbr)
 
     def core_neighbor(self, local: Site, remote: Site) -> str:
-        return self.core_address(remote, local)
+        return self.fiti.core_neighbor(local.abbr, remote.abbr)
+
+    def core_next_hop(self, local: Site, remote: Site) -> str:
+        return self.fiti.next_hop(local.abbr, remote.abbr,
+                                  allowed={site.abbr for site in self.sites})
 
     def underlay_network(self, site: Site) -> ipaddress.IPv6Network:
         return ipaddress.IPv6Network('fd00:0:%d::/48' % site.id)
@@ -241,6 +235,18 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     l2_tunnel = str(raw.get('l2_tunnel', 'srv6')).lower()
     if l2_tunnel not in ('srv6', 'vxlan'):
         raise ValueError('l2_tunnel 必须是 srv6/vxlan: %s' % l2_tunnel)
+    fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
+    if not os.path.isabs(fiti_topology):
+        fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)
+    fiti_topology = os.path.abspath(fiti_topology)
+    if not os.path.isfile(fiti_topology):
+        raise ValueError('找不到 FITI 拓扑文件: %s' % fiti_topology)
+    fiti = load_fiti_topology(fiti_topology)
+    missing = [site.abbr for site in sites
+               if site.abbr not in fiti.nodes]
+    if missing:
+        raise ValueError('parallel.json 站点不在 FITI 拓扑中: %s'
+                         % ', '.join(missing))
     return ParallelConfig(
         path=path,
         sites=sites,
@@ -248,6 +254,8 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         p4_json=os.path.abspath(p4_json),
         thrift_base=int(p4.get('thrift_base', 11000)),
         p4_log_level=str(p4.get('log_level', 'info')),
+        fiti_topology=fiti_topology,
+        fiti=fiti,
         l2_tunnel=l2_tunnel,
         underlay=dict(raw.get('underlay', {}) or {}),
     )
@@ -257,6 +265,8 @@ def dump_config(cfg: ParallelConfig) -> None:
     print('配置: %s' % cfg.path)
     print('站点: %s' % ', '.join(
         '%s(%s)' % (item.name, item.abbr) for item in cfg.sites))
+    print('FITI 核心: %s（%d 条链路）'
+          % (cfg.fiti_topology, len(cfg.fiti.links)))
     print('L2 隧道: %s' % cfg.l2_tunnel)
     print('并行网络:')
     for network in cfg.networks:

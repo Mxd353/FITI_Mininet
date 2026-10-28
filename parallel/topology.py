@@ -96,13 +96,15 @@ class ParallelTopology(Topo):
                 self.addSwitch(name, dpid='%016x'
                                % switch_id(site, role))
 
-        # Core and site uplinks.  The core is a Beijing-centred star:
-        # C_bj -- every other site C router.  IPv6 addresses are
-        # configured with ``ip -6 addr replace`` after net.start; Mininet's
-        # ifconfig-based link parameters only handle IPv4 reliably.
-        for site in cfg.sites:
-            if site.abbr != bj.abbr:
-                self.addLink(c_name(bj), c_name(site))
+        # Site-to-site core links follow the actual FITI topology
+        # (configs/fiti.json).  Each site's C router is one FITI node.
+        site_abbrs = {site.abbr for site in cfg.sites}
+        for link in cfg.fiti.links:
+            if link.src_abbr not in site_abbrs or link.dst_abbr not in site_abbrs:
+                continue
+            src = cfg.site(link.src_abbr)
+            dst = cfg.site(link.dst_abbr)
+            self.addLink(c_name(src), c_name(dst))
         for site in cfg.sites:
             self.addLink(c_name(site), e_name(site))
             self.addLink(c_name(site), a_name(site))

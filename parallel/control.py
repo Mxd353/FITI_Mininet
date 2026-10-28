@@ -369,15 +369,19 @@ def _configure_addresses(net, cfg):
     bj = cfg.site('bj')
     c_bj = net.get(c_name(bj))
 
-    # Beijing-centred core links: C_bj -- all other site C routers.
-    for site in cfg.sites:
-        if site.abbr == bj.abbr:
+    # Core links follow the actual FITI topology, restricted to active sites.
+    site_abbrs = {item.abbr for item in cfg.sites}
+    for link in cfg.fiti.links:
+        if link.src_abbr not in site_abbrs or link.dst_abbr not in site_abbrs:
             continue
-        c_site = net.get(c_name(site))
-        _set_addr(c_bj, _host_intf(c_bj, c_name(site)),
-                  cfg.core_address(bj, site) + '/64')
-        _set_addr(c_site, _host_intf(c_site, c_name(bj)),
-                  cfg.core_address(site, bj) + '/64')
+        src = cfg.site(link.src_abbr)
+        dst = cfg.site(link.dst_abbr)
+        c_src = net.get(c_name(src))
+        c_dst = net.get(c_name(dst))
+        _set_addr(c_src, _host_intf(c_src, c_name(dst)),
+                  cfg.core_address(src, dst) + '/64')
+        _set_addr(c_dst, _host_intf(c_dst, c_name(src)),
+                  cfg.core_address(dst, src) + '/64')
 
     for site in cfg.sites:
         c = net.get(c_name(site))
@@ -408,31 +412,30 @@ def _configure_addresses(net, cfg):
 
 
 def _core_next(net, cfg, site, target):
-    """Return the next-hop address and interface for a core route.
-
-    The core is a Beijing-centred star.  Beijing routes directly to the
-    destination C router; every other site sends remote traffic via Beijing.
-    """
-    hub = cfg.site('bj')
-    peer = target if site.abbr == hub.abbr else hub
+    """Return the next-hop address and interface on the FITI core path."""
+    next_abbr = cfg.core_next_hop(site, target)
+    peer = cfg.site(next_abbr)
     return (cfg.core_neighbor(site, peer),
             _host_intf(net.get(c_name(site)), c_name(peer)))
 
 
 def _configure_core_neighbors(net, cfg):
-    hub = cfg.site('bj')
-    for site in cfg.sites:
-        c = net.get(c_name(site))
-        if site.abbr == hub.abbr:
-            peers = [item for item in cfg.sites if item.id != site.id]
-        else:
-            peers = [hub]
-        for peer in peers:
-            intf = _host_intf(c, c_name(peer))
-            addr = cfg.core_neighbor(site, peer)
-            mac = _host_mac(net.get(c_name(peer)), c_name(site))
-            c.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                  % (addr, mac, intf.name))
+    site_abbrs = {item.abbr for item in cfg.sites}
+    for link in cfg.fiti.links:
+        if link.src_abbr not in site_abbrs or link.dst_abbr not in site_abbrs:
+            continue
+        src = cfg.site(link.src_abbr)
+        dst = cfg.site(link.dst_abbr)
+        c_src = net.get(c_name(src))
+        c_dst = net.get(c_name(dst))
+        intf_src = _host_intf(c_src, c_name(dst))
+        intf_dst = _host_intf(c_dst, c_name(src))
+        mac_dst = _host_mac(c_dst, c_name(src))
+        mac_src = _host_mac(c_src, c_name(dst))
+        c_src.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
+                  % (cfg.core_neighbor(src, dst), mac_dst, intf_src.name))
+        c_dst.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
+                  % (cfg.core_neighbor(dst, src), mac_src, intf_dst.name))
 
 
 def _configure_routers(net, cfg, macs):
@@ -575,8 +578,7 @@ def _configure_public(net, cfg):
         if site.abbr == hub.abbr:
             continue
         c = net.get(c_name(site))
-        intf = _host_intf(c, c_name(hub))
-        next_hop = cfg.core_neighbor(site, hub)
+        next_hop, intf = _core_next(net, cfg, site, hub)
         c.cmd('ip -6 route replace 2001:255:0:100::2000/128 via '
               '%s dev %s' % (next_hop, intf.name))
     pub.cmd('ip -6 route replace 2001:255:0:100::2000/128 dev %s'

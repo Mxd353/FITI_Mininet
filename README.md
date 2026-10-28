@@ -52,9 +52,15 @@ make parallel-run-min
 规模：
 
 ```text
-4 个站点：北京、上海、广州、成都
+4 个站点：北京、上海、天津、济南
 12 台 BMv2
 14 个 Linux netns
+```
+
+这 4 个站点在 FITI 实际拓扑中组成连通路径：
+
+```text
+北京 — 天津 — 济南 — 上海
 ```
 
 对应免 root 命令：
@@ -127,13 +133,17 @@ C — A — S2 — cloud
 - `cloud`：每站点一台 Linux 主机；
 - `pub_border`、`fix`：北京公网边界。
 
-核心采用北京星型拓扑：
+站点之间的核心链路直接使用 FITI 实际拓扑：
 
 ```text
-C_bj 直连其余 40 个站点的 C
+configs/fiti.json
+41 个节点，43 条链路
 ```
 
-非北京站点访问其他站点时经 `C_bj` 转发。
+每个并行网络站点对应一个 FITI 节点，站点 C 路由器按照 FITI 的实际链路
+互联，C 路由按 FITI 图的最短路径计算下一跳。
+
+例如北京到上海在最小验证拓扑中经过天津和济南。
 
 ## 单云主机和多 VLAN 子接口
 
@@ -178,8 +188,10 @@ cl_bj
 `configs/parallel-min.json` 是 4 站点验证子集：
 
 ```text
-bj、sh、gz、cd
+bj、sh、tjn、jnn
 ```
+
+选择的是 FITI 实际拓扑中连通的北京—天津—济南—上海路径。
 
 ## EVPN 路由模型
 
@@ -324,6 +336,7 @@ parallel/                   并行网络实现
 └── p4.py                   P4 编译和名称解析
 
 configs/
+├── fiti.json               FITI 实际拓扑数据（41 节点/43 链路）
 ├── parallel.json           41 站点配置
 └── parallel-min.json       4 站点验证配置
 
