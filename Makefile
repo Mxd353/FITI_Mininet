@@ -4,7 +4,8 @@ PARALLEL_P4INFO   = build/parallel_vpn.p4info.txt
 
 .PHONY: all clean parallel-p4 parallel-dump parallel-evpn-dump \
         parallel-dump-min parallel-evpn-dump-min test test-evpn test-ovs \
-        test-verify verify-dry verify-min verify-full render-config \
+        test-verify verify-dry verify-min verify-full verify-isolation \
+        verify-faults render-config \
         parallel-run parallel-run-no-cli parallel-run-min \
         parallel-run-no-cli-min parallel-stop
 
@@ -56,6 +57,15 @@ verify-min: parallel-p4
 # 功能验收：41 站点全量
 verify-full: parallel-p4
 	sudo python3 verify/runner.py --config configs/parallel.json
+
+# 只跑隔离或故障用例
+verify-isolation:
+	sudo python3 verify/runner.py --config configs/parallel-min.json \
+		--tag isolation
+
+verify-faults:
+	sudo python3 verify/runner.py --config configs/parallel-min.json \
+		--tag faults
 
 # 重新生成真实设备配置基线
 render-config:

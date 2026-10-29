@@ -163,6 +163,45 @@ class ProgressTest(unittest.TestCase):
         self.assertIn('bad', text)
 
 
+class AgentRunTest(unittest.TestCase):
+    def test_updates_every_switch_with_ordering(self):
+        import parallel.evpn_agent as agent_mod
+
+        class FakeNode(object):
+            def __init__(self, port):
+                self.thrift_port = port
+
+        class FakeNet(object):
+            def __init__(self):
+                self.nodes = {'E_a': FakeNode(1), 'E_b': FakeNode(2)}
+
+            def get(self, name):
+                return self.nodes[name]
+
+        calls = []
+        original = agent_mod.switch_cli
+        agent_mod.switch_cli = lambda port, cmds: calls.append((port, list(cmds)))
+        try:
+            agent = agent_mod.ParallelEvpnAgent.__new__(
+                agent_mod.ParallelEvpnAgent)
+            agent.net = FakeNet()
+            agent._delete_by_key = lambda switch, table, keys: calls.append(
+                (agent.net.get(switch).thrift_port,
+                 ['delete', table, list(keys)]))
+            agent._run([('E_a', 'table_add a'),
+                        ('E_b', 'table_add b'),
+                        ('E_a', ('delete', 't', (1,)))])
+        finally:
+            agent_mod.switch_cli = original
+
+        by_port = {}
+        for port, cmds in calls:
+            by_port.setdefault(port, []).extend(cmds)
+        self.assertEqual(by_port[1][0], 'table_add a')
+        self.assertEqual(by_port[1][1:], ['delete', 't', [1]])
+        self.assertEqual(by_port[2], ['table_add b'])
+
+
 class ReportTest(unittest.TestCase):
     def test_json_and_junit(self):
         results = [
@@ -173,19 +212,27 @@ class ReportTest(unittest.TestCase):
                                        output='100% packet loss')]),
             Result(name='skipme', status='skip', reason='缺少站点: gz'),
         ]
+        metadata = {'config': 'configs/x.json', 'sites': 4,
+                    'git': {'commit': 'abc123', 'dirty': False}}
         with tempfile.TemporaryDirectory() as directory:
             json_path = os.path.join(directory, 'report.json')
             xml_path = os.path.join(directory, 'report.xml')
-            write_json(results, json_path)
-            write_junit(results, xml_path)
+            write_json(results, json_path, metadata)
+            write_junit(results, xml_path, metadata)
             with open(json_path, encoding='utf-8') as handle:
                 data = handle.read()
             self.assertIn('"fail": 1', data)
+            self.assertIn('"sites": 4', data)
+            self.assertIn('"commit": "abc123"', data)
             tree = ET.parse(xml_path)
             suite = tree.getroot()
             self.assertEqual(suite.get('tests'), '3')
             self.assertEqual(suite.get('failures'), '1')
             self.assertEqual(suite.get('skipped'), '1')
+            props = {item.get('name'): item.get('value')
+                     for item in suite.findall('./properties/property')}
+            self.assertEqual(props.get('git.commit'), 'abc123')
+            self.assertEqual(props.get('sites'), '4')
 
 
 class RenderTest(unittest.TestCase):

@@ -26,6 +26,7 @@ import re
 import socketserver
 import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from parallel.bmv2 import switch_cli
 from parallel.config import DEFAULT_CONFIG, ParallelConfig, load_config
@@ -37,6 +38,11 @@ from parallel.p4 import runtime_names
 from parallel.topology import c_name, cloud_name, e_name, s1_name
 
 DEFAULT_EVPN_SOCKET = '/tmp/parallel_evpn.sock'
+
+#: How many site PEs to update concurrently.  Each update is an independent
+#: simple_switch_CLI process, so parallelism is safe; set
+#: PARALLEL_EVPN_WORKERS=1 to fall back to sequential updates.
+MAX_WORKERS = max(1, int(os.environ.get('PARALLEL_EVPN_WORKERS', '16')))
 
 
 class AgentError(RuntimeError):
@@ -102,6 +108,13 @@ class ParallelEvpnAgent:
         handle = int(match.group(1), 16)
         switch_cli(port, ['table_delete %s %d' % (table_name, handle)])
 
+    def _run_switch(self, switch, commands, deletes):
+        port = self.net.get(switch).thrift_port
+        if commands:
+            switch_cli(port, commands)
+        for table, keys in deletes:
+            self._delete_by_key(switch, table, keys)
+
     def _run(self, operations):
         commands = defaultdict(list)
         deletes = defaultdict(list)
@@ -110,11 +123,19 @@ class ParallelEvpnAgent:
                 deletes[switch].append((command[1], command[2]))
             else:
                 commands[switch].append(command)
-        for switch, cmds in commands.items():
-            switch_cli(self.net.get(switch).thrift_port, cmds)
-        for switch, items in deletes.items():
-            for table, keys in items:
-                self._delete_by_key(switch, table, keys)
+        switches = sorted(set(commands) | set(deletes))
+        if not switches:
+            return
+        workers = min(MAX_WORKERS, len(switches))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(self._run_switch, switch,
+                            commands.get(switch, []),
+                            deletes.get(switch, []))
+                for switch in switches
+            ]
+            for future in futures:
+                future.result()
 
     # ------------------------------------------------------------------
     # L3VPN

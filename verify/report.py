@@ -67,9 +67,10 @@ def print_summary(results, stream=print) -> None:
            % (passed, failed, skipped, len(results)))
 
 
-def write_json(results, path) -> None:
+def write_json(results, path, metadata=None) -> None:
     payload = {
         'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'metadata': metadata or {},
         'summary': {
             'total': len(results),
             'pass': sum(1 for item in results if item.status == 'pass'),
@@ -81,7 +82,8 @@ def write_json(results, path) -> None:
     _write(path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
 
 
-def write_junit(results, path, suite='parallel-verify') -> None:
+def write_junit(results, path, metadata=None,
+                suite='parallel-verify') -> None:
     failures = sum(1 for item in results if item.status == 'fail')
     skipped = sum(1 for item in results if item.status == 'skip')
     total = sum(item.seconds for item in results)
@@ -89,6 +91,12 @@ def write_junit(results, path, suite='parallel-verify') -> None:
              '<testsuite name="%s" tests="%d" failures="%d" skipped="%d" '
              'time="%.3f">' % (escape(suite), len(results), failures,
                                skipped, total)]
+    if metadata:
+        lines.append('  <properties>')
+        for key, value in sorted(_flatten(metadata).items()):
+            lines.append('    <property name="%s" value="%s"/>'
+                         % (escape(key), escape(str(value))))
+        lines.append('  </properties>')
     for result in results:
         lines.append('  <testcase classname="%s" name="%s" time="%.3f">'
                      % (escape(suite), escape(result.name), result.seconds))
@@ -129,6 +137,19 @@ def _details_text(result) -> str:
                 lines.append('  | %s' % line)
         lines.append('')
     return '\n'.join(lines) + '\n'
+
+
+def _flatten(payload, prefix=''):
+    items = {}
+    for key, value in payload.items():
+        name = '%s.%s' % (prefix, key) if prefix else str(key)
+        if isinstance(value, dict):
+            items.update(_flatten(value, name))
+        elif isinstance(value, (list, tuple)):
+            items[name] = ','.join(str(item) for item in value)
+        else:
+            items[name] = value
+    return items
 
 
 def _safe(name) -> str:

@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
+import subprocess
 import sys
 import time
 
@@ -37,6 +39,45 @@ RECEIVED_RE = re.compile(r'(\d+) received')
 
 class StepError(AssertionError):
     pass
+
+
+def _first_line(command, needle=None):
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True,
+                              timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    lines = [line.strip() for line in
+             (proc.stdout or proc.stderr).strip().splitlines() if line.strip()]
+    if needle:
+        for line in lines:
+            if needle in line:
+                return line
+    return lines[0] if lines else ''
+
+
+def collect_metadata(cfg, args, run_id):
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    git = ['git', '-C', root, '-c', 'safe.directory=*']
+    commit = _first_line(git + ['rev-parse', '--short', 'HEAD'])
+    dirty = bool(_first_line(git + ['status', '--porcelain']))
+    return {
+        'run_id': run_id,
+        'config': os.path.abspath(cfg.path),
+        'sites': len(cfg.sites),
+        'networks': len(cfg.networks),
+        'cases': os.path.abspath(args.cases),
+        'tags': list(args.tag or []),
+        'include_faults': bool(args.all),
+        'settle': args.settle,
+        'git': {'commit': commit or None, 'dirty': dirty},
+        'tools': {
+            'p4c': _first_line(['p4c-bm2-ss', '--version'], needle='Version'),
+            'bmv2': _first_line(['simple_switch', '--version']),
+            'ovs': _first_line(['ovs-vsctl', '--version']),
+        },
+        'python': platform.python_version(),
+    }
 
 
 def _ping_command(iface, target, count, timeout=1):
@@ -386,6 +427,9 @@ def main(argv=None):
         print('\n共 %d 条用例，配置 %s' % (len(cases), cfg.path))
         return 0
 
+    run_id = time.strftime('%Y%m%d-%H%M%S')
+    metadata = collect_metadata(cfg, args, run_id)
+
     reporter = None
     if args.progress:
         width = max((len(case.name) for case in cases), default=10)
@@ -401,10 +445,9 @@ def main(argv=None):
         print('')
         print_summary(results)
 
-    stamp = time.strftime('%Y%m%d-%H%M%S')
-    run_dir = os.path.join(args.runs_dir, stamp)
-    write_json(results, os.path.join(run_dir, 'report.json'))
-    write_junit(results, os.path.join(run_dir, 'report.xml'))
+    run_dir = os.path.join(args.runs_dir, run_id)
+    write_json(results, os.path.join(run_dir, 'report.json'), metadata)
+    write_junit(results, os.path.join(run_dir, 'report.xml'), metadata)
     if args.evidence:
         write_evidence(results, os.path.join(run_dir, 'evidence'))
     print('\n报告: %s' % run_dir)

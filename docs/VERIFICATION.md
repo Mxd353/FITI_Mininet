@@ -19,6 +19,10 @@ runs/<时间戳>/report.xml
 runs/<时间戳>/evidence/<用例>.txt
 ```
 
+`report.json` 的 `metadata` 记录配置路径、站点数、网络数、git commit、
+是否 dirty、p4c/bmv2/OVS 版本和 Python 版本，便于事后追溯这份结果对应
+哪个代码和配置。JUnit 报告里以 `<properties>` 形式提供同样的信息。
+
 运行时会逐条打印进度，跑完给汇总：
 
 ```text
@@ -184,6 +188,17 @@ make test               # 确认差异是有意的
 ```text
 仿真表项、OVS 配置、真实设备 CLI 使用同一份来源
 ```
+
+## 动态路由更新的并发
+
+EVPN agent 默认并发更新 16 台 E（每台一个 `simple_switch_CLI` 进程）：
+
+```bash
+PARALLEL_EVPN_WORKERS=8 sudo python3 verify/runner.py ...
+PARALLEL_EVPN_WORKERS=1 sudo python3 verify/runner.py ...   # 退回串行
+```
+
+41 站点下一次 L3 advertise 预计从约 12.6 秒降到数秒级，具体以实测为准。
 
 ## 失败排查
 
