@@ -7,7 +7,7 @@ PARALLEL_P4INFO   = build/parallel_vpn.p4info.txt
         test-verify verify-dry verify-min verify-full verify-isolation \
         verify-faults render-config \
         parallel-run parallel-run-no-cli parallel-run-min \
-        parallel-run-no-cli-min parallel-stop
+        parallel-run-no-cli-min parallel-stop fix-tty
 
 all: parallel-p4
 
@@ -87,8 +87,25 @@ parallel-run-min: parallel-p4
 parallel-run-no-cli-min: parallel-p4
 	sudo python3 parallel_net.py --config configs/parallel-min.json --no-cli
 
+# 先发 SIGINT 让 Mininet CLI 走 finally 并恢复终端（readline 会处理
+# SIGINT 并还原 termios），再升级到 TERM/KILL；最后兜底 stty sane。
 parallel-stop:
-	-sudo pkill -9 -f simple_switch
-	-sudo pkill -9 -f parallel_net.py
+	-sudo pkill -INT -f parallel_net.py
+	-sleep 2
+	-sudo pkill -TERM -f parallel_net.py
+	-sleep 1
+	-sudo pkill -KILL -f parallel_net.py
+	-sudo pkill -TERM -f simple_switch
+	-sleep 1
+	-sudo pkill -KILL -f simple_switch
 	-sudo mn -c
 	-rm -f /tmp/parallel_evpn.sock
+	-stty sane 2>/dev/null || true
+	-printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?2004l'
+
+# 在终端不回显时手动执行：make fix-tty
+fix-tty:
+	-stty sane 2>/dev/null || true
+	-printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?2004l'
+	@echo
+	@echo "终端状态已重置；如果仍然异常，执行 reset"

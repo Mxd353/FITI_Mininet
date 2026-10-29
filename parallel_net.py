@@ -100,6 +100,9 @@ def main(argv=None):
             while True:
                 time.sleep(1)
         CLI(net)
+    except KeyboardInterrupt:
+        print('\n*** 收到中断，正在清理')
+        return 130
     finally:
         if evpn_agent is not None:
             from parallel.evpn_agent import stop_evpn_agent

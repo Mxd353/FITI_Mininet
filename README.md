@@ -489,6 +489,35 @@ sudo ss -tanp | grep ':端口号'
 sudo lsof -nP -iTCP:端口号
 ```
 
+### `parallel-stop` 后终端不回显
+
+原因：Mininet CLI 使用 readline，进程被 `SIGKILL` 时没机会恢复 termios，
+终端的行规程停在 raw 模式，所以输入不回显。
+
+`make parallel-stop` 现在会：
+
+```text
+先发 SIGINT，让 CLI 走 finally 并恢复终端
+再升级到 SIGTERM，最后才 SIGKILL
+结束时执行 stty sane 并关闭鼠标/括号粘贴模式
+```
+
+如果终端仍然异常，在**出问题的那个终端**执行：
+
+```bash
+make fix-tty
+```
+
+或：
+
+```bash
+stty sane
+reset
+```
+
+注意：从另一个终端执行 `make parallel-stop` 时，里面的 `stty sane` 只作用于
+执行 make 的那个终端；出问题的终端靠 SIGINT 恢复，必要时再手动 `make fix-tty`。
+
 ### `Network is unreachable`
 
 ```text
