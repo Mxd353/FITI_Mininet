@@ -195,13 +195,15 @@ make test               # 确认差异是有意的
 
 ## 下发并发
 
-静态表项和 EVPN agent 都按交换机并发，默认 16 路。每台 E 一个
-`simple_switch_CLI` 进程，同一台交换机上的命令仍然有序。
+静态表项、EVPN agent 和 S1/S2 的 OVS 配置都按交换机或站点并发，默认 16 路。
+每台 E 一个 `simple_switch_CLI` 进程，同一台交换机上的命令仍然有序。
 
 ```bash
 PARALLEL_CONTROL_WORKERS=8 sudo python3 verify/runner.py ...   # 静态表项
 PARALLEL_EVPN_WORKERS=8 sudo python3 verify/runner.py ...      # 动态路由
-PARALLEL_CONTROL_WORKERS=1 PARALLEL_EVPN_WORKERS=1 ...         # 退回串行
+PARALLEL_OVS_WORKERS=8 sudo python3 verify/runner.py ...       # S1/S2 配置
+PARALLEL_CONTROL_WORKERS=1 PARALLEL_EVPN_WORKERS=1 \
+PARALLEL_OVS_WORKERS=1 sudo python3 verify/runner.py ...       # 退回串行
 ```
 
 41 站点实测：
@@ -210,6 +212,7 @@ PARALLEL_CONTROL_WORKERS=1 PARALLEL_EVPN_WORKERS=1 ...         # 退回串行
 动态 L3 advertise   12.6s -> 2.2s
 动态 L2 advertise    7.4s -> 1.4s
 静态表项下发        34.7s -> 待实测（预计 10s 以内）
+OVS 接入配置        17.3s -> 待实测（预计 3~4s）
 ```
 
 ## 失败排查

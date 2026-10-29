@@ -15,9 +15,15 @@ L2 FIB and no multicast group are installed on the access switches.
 
 from __future__ import annotations
 
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from parallel.topology import a_name, cloud_name, e_name, s1_name, s2_name
+
+#: How many sites to configure concurrently.  S1/S2 of different sites are
+#: independent OVS bridges, so per-site parallelism is safe.
+MAX_WORKERS = max(1, int(os.environ.get('PARALLEL_OVS_WORKERS', '16')))
 
 #: All usable 802.1Q VLANs on a trunk.
 ALL_VLANS = '1-4094'
@@ -94,27 +100,35 @@ def trunk_vlans(switch, intf):
 
 def configure_ovs_switches(net, cfg):
     """Configure S1/S2 as VLAN-filtering OVS bridges."""
-    for site in cfg.sites:
-        s1 = net.get(s1_name(site))
-        s2 = net.get(s2_name(site))
-        cloud = cloud_name(site)
-        uplink_s2 = intf_to(s2, a_name(site))
+    sites = list(cfg.sites)
+    workers = min(MAX_WORKERS, len(sites)) or 1
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_configure_site, net, site) for site in sites]
+        for future in futures:
+            future.result()
 
-        ensure_normal_flow(s1)
-        ensure_normal_flow(s2)
 
-        set_trunk(s1, intf_to(s1, e_name(site)), ALL_VLANS)
-        set_trunk(s1, intf_to(s1, cloud), ALL_VLANS)
-        set_trunk(s2, intf_to(s2, cloud), ALL_VLANS)
-        set_trunk(s2, uplink_s2, NON_PARALLEL_VLANS)
+def _configure_site(net, site):
+    """Configure one site's S1/S2 bridges."""
+    s1 = net.get(s1_name(site))
+    s2 = net.get(s2_name(site))
+    cloud = cloud_name(site)
+    uplink_s2 = intf_to(s2, a_name(site))
 
-        # S2's uplink is the only restrictive policy in the design; make a
-        # silent ovs-vsctl typo visible at startup instead of at ping time.
-        vlans = trunk_vlans(s2, uplink_s2)
-        if not vlans:
-            raise RuntimeError('%s 上行没有配置 OVS trunk'
-                               % s2.name)
-        if (PARALLEL_VLAN_MIN in vlans) or (PARALLEL_VLAN_MAX in vlans):
-            raise RuntimeError('%s 上行仍然放行并行 VLAN %d-%d'
-                               % (s2.name, PARALLEL_VLAN_MIN,
-                                  PARALLEL_VLAN_MAX))
+    ensure_normal_flow(s1)
+    ensure_normal_flow(s2)
+
+    set_trunk(s1, intf_to(s1, e_name(site)), ALL_VLANS)
+    set_trunk(s1, intf_to(s1, cloud), ALL_VLANS)
+    set_trunk(s2, intf_to(s2, cloud), ALL_VLANS)
+    set_trunk(s2, uplink_s2, NON_PARALLEL_VLANS)
+
+    # S2's uplink is the only restrictive policy in the design; make a
+    # silent ovs-vsctl typo visible at startup instead of at ping time.
+    vlans = trunk_vlans(s2, uplink_s2)
+    if not vlans:
+        raise RuntimeError('%s 上行没有配置 OVS trunk' % s2.name)
+    if (PARALLEL_VLAN_MIN in vlans) or (PARALLEL_VLAN_MAX in vlans):
+        raise RuntimeError('%s 上行仍然放行并行 VLAN %d-%d'
+                           % (s2.name, PARALLEL_VLAN_MIN,
+                              PARALLEL_VLAN_MAX))
