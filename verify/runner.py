@@ -368,6 +368,10 @@ def _run(args, cfg, cases, reporter=None):
                 result = Result(
                     name=case.name, status='skip',
                     reason='缺少站点: %s' % ','.join(missing))
+            elif case.requires_hosts > cfg.hosts_per_site:
+                result = Result(
+                    name=case.name, status='skip',
+                    reason='需要每站点 %d 台主机' % case.requires_hosts)
             else:
                 result = runner.run_case(case)
                 if result.status == 'fail' and args.evidence:
@@ -429,7 +433,8 @@ def main(argv=None):
         raise SystemExit('用例错误: %s' % exc)
 
     if args.list or args.dry_run:
-        rows = summarize(cases, [site.abbr for site in cfg.sites])
+        rows = summarize(cases, [site.abbr for site in cfg.sites],
+                         cfg.hosts_per_site)
         width = max(len(row['name']) for row in rows) if rows else 10
         for row in rows:
             print('%-6s %-*s %-12s %s'

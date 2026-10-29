@@ -36,6 +36,7 @@ class Case:
     steps: List[dict]
     tags: Tuple[str, ...] = ()
     requires_sites: Tuple[str, ...] = ()
+    requires_hosts: int = 1
     teardown: List[dict] = field(default_factory=list)
     description: str = ''
     source: str = ''
@@ -108,6 +109,7 @@ def load_cases(path: str, tags: Optional[Sequence[str]] = None,
                 steps=steps,
                 tags=_as_tuple(entry.get('tags')),
                 requires_sites=_as_tuple(entry.get('requires_sites')),
+                requires_hosts=int(entry.get('requires_hosts', 1)),
                 teardown=teardown,
                 description=str(entry.get('description', '')),
                 source=filename,
@@ -132,18 +134,24 @@ def filter_cases(cases: List[Case], tags: Optional[Sequence[str]] = None,
     return [case for case in cases if not case.wants(TAG_FAULTS)]
 
 
-def summarize(cases: List[Case], config_sites) -> List[dict]:
+def summarize(cases: List[Case], config_sites,
+              hosts_per_site: int = 1) -> List[dict]:
     """Return a dry-run table (case -> run/skip + reason)."""
     sites = set(config_sites)
     rows = []
     for case in cases:
         missing = [site for site in case.requires_sites if site not in sites]
+        reason = ''
+        if missing:
+            reason = '缺少站点: %s' % ','.join(missing)
+        elif case.requires_hosts > hosts_per_site:
+            reason = '需要每站点 %d 台主机' % case.requires_hosts
         rows.append({
             'name': case.name,
             'tags': ','.join(case.tags),
             'steps': len(case.steps),
-            'status': 'SKIP' if missing else 'RUN',
-            'reason': ('缺少站点: %s' % ','.join(missing)) if missing else '',
+            'status': 'SKIP' if reason else 'RUN',
+            'reason': reason,
             'source': os.path.basename(case.source),
         })
     return rows

@@ -56,11 +56,31 @@ def configure_forwarding(net, cfg):
         border.cmd('sysctl -w net.ipv6.conf.all.forwarding=1')
 
 
+def _resource_warning(cfg):
+    hosts = len(cfg.sites) * int(cfg.hosts_per_site)
+    if cfg.hosts_per_site > 1 and len(cfg.sites) > 8:
+        print('*** 警告：%d 站点 × %d 主机 = %d 台云主机，'
+              'netns/bridge/VXLAN 数量较大，建议先用 parallel-min'
+              % (len(cfg.sites), cfg.hosts_per_site, hosts))
+    try:
+        with open('/proc/meminfo', encoding='utf-8') as handle:
+            for line in handle:
+                if line.startswith('MemAvailable:'):
+                    available = int(line.split()[1]) // 1024
+                    if available < 1500:
+                        print('*** 警告：可用内存仅 %d MB，可能不足以启动全部节点'
+                              % available)
+                    break
+    except OSError:
+        pass
+
+
 def build_parallel_net(cfg: ParallelConfig, json_path=None,
                        thrift_base=None, log_dir=None, start=True,
                        install_rules=True):
     json_path = os.path.abspath(json_path or cfg.p4_json)
     if start:
+        _resource_warning(cfg)
         running = other_instances()
         if running:
             raise RuntimeError(

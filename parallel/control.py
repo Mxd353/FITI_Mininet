@@ -349,6 +349,7 @@ def _configure_cloud_host(net, cfg, site, host_id, e_mac):
               % (parent.name, underlay))
     cloud.cmd('ip addr replace %s/24 dev %s' % (local_ip, underlay))
     cloud.cmd('ip link set dev %s up' % underlay)
+    cloud.cmd('ebtables -F FORWARD 2>/dev/null || true')
 
     for network in cfg.networks_for_site(site):
         uplink = cfg.vlan_ifname(network)
@@ -405,6 +406,14 @@ def _configure_cloud_host(net, cfg, site, host_id, e_mac):
         batch = '/tmp/fdb_%s_%d_%d.txt' % (site.abbr, host_id, network.id)
         cloud.cmd("cat > %s <<'EOF'\n%s\nEOF\nbridge -batch %s"
                   % (batch, '\n'.join(fdb), batch))
+
+        # Split horizon: BUM from the PE must not be re-injected into the
+        # local VXLAN, and BUM from the peer must not be sent back to the PE.
+        # Unicast never crosses these two ports (static FDB pins it).
+        cloud.cmd('ebtables -A FORWARD -i %s -o %s -j DROP '
+                  '2>/dev/null || true' % (uplink, vxlan))
+        cloud.cmd('ebtables -A FORWARD -i %s -o %s -j DROP '
+                  '2>/dev/null || true' % (vxlan, uplink))
 
 
 def _configure_cloud_interfaces(net, cfg):

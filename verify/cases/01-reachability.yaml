@@ -34,6 +34,7 @@ cases:
         expect: pass
 
   - name: l3vpn-net1-bj-host2
+    requires_hosts: 2
     tags: [core, l3, multihost]
     steps:
       - type: ping
@@ -43,6 +44,7 @@ cases:
         expect: pass
 
   - name: l3vpn-net1-bj-to-sh-host2
+    requires_hosts: 2
     tags: [core, l3, multihost]
     requires_sites: [sh]
     steps:
@@ -53,6 +55,7 @@ cases:
         expect: pass
 
   - name: l3vpn-net1-bj2-sh2
+    requires_hosts: 2
     tags: [core, l3, multihost]
     requires_sites: [sh]
     steps:
@@ -63,6 +66,7 @@ cases:
         expect: pass
 
   - name: l2vpn-net3-bj-host2
+    requires_hosts: 2
     tags: [core, l2, multihost]
     steps:
       - type: ping
@@ -72,6 +76,7 @@ cases:
         expect: pass
 
   - name: l2vpn-net3-bj-to-sh-host2
+    requires_hosts: 2
     tags: [core, l2, multihost]
     requires_sites: [sh]
     steps:

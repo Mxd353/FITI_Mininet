@@ -42,6 +42,7 @@ cases:
         present: true
 
   - name: e-bj-host-route
+    requires_hosts: 2
     tags: [core, control, l3]
     steps:
       - type: p4_entry
