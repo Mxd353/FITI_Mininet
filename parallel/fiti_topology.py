@@ -25,7 +25,7 @@ class FitiTopology:
     """Load configs/fiti.json and provide underlay routing helpers."""
 
     def __init__(self, path):
-        self.path = path
+        self.filename = path
         with open(path, encoding='utf-8') as handle:
             data = json.load(handle)
         self.nodes = {}
@@ -67,6 +67,7 @@ class FitiTopology:
             self.adjacency[link.dst_abbr].append(
                 (link.src_abbr, link.weight))
         self._next_cache = {}
+        self._path_cache = {}
 
     def node_id(self, abbr):
         return int(self.nodes[abbr]['id'])
@@ -87,11 +88,11 @@ class FitiTopology:
     def core_neighbor(self, local, remote):
         return self.core_address(remote, local)
 
-    def next_hop(self, source, target, allowed=None):
-        """Return the next FITI node from source towards target."""
+    def path(self, source, target, allowed=None):
+        """Return the full FITI node sequence from source to target."""
         key = (source, target, frozenset(allowed) if allowed else None)
-        if key in self._next_cache:
-            return self._next_cache[key]
+        if key in self._path_cache:
+            return list(self._path_cache[key])
         if source == target:
             raise ValueError('source 和 target 相同: %s' % source)
         if source not in self.adjacency or target not in self.adjacency:
@@ -116,14 +117,29 @@ class FitiTopology:
         if target not in distances:
             raise ValueError('FITI 拓扑中 %s 到 %s 不可达'
                              % (source, target))
+        path = [target]
         current = target
-        while previous.get(current) != source:
+        while current != source:
             current = previous.get(current)
             if current is None:
-                raise ValueError('无法计算 %s 到 %s 的下一跳'
+                raise ValueError('无法计算 %s 到 %s 的路径'
                                  % (source, target))
-        self._next_cache[key] = current
-        return current
+            path.append(current)
+        path.reverse()
+        self._path_cache[key] = tuple(path)
+        return path
+
+    def next_hop(self, source, target, allowed=None):
+        """Return the next FITI node from source towards target."""
+        key = (source, target, frozenset(allowed) if allowed else None)
+        if key in self._next_cache:
+            return self._next_cache[key]
+        path = self.path(source, target, allowed)
+        if len(path) < 2:
+            raise ValueError('无法计算 %s 到 %s 的下一跳'
+                             % (source, target))
+        self._next_cache[key] = path[1]
+        return path[1]
 
     def core_links(self):
         return list(self.links)

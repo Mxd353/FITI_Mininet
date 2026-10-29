@@ -35,7 +35,8 @@ parallel-dump-min:
 parallel-evpn-dump-min:
 	python3 parallel_evpn.py --config configs/parallel-min.json --dump --validate
 
-test: test-evpn test-ovs test-control test-cleanup test-verify
+test: test-evpn test-ovs test-control test-cleanup test-verify \
+      test-path-map
 
 test-evpn:
 	python3 -m unittest tests.test_evpn
@@ -51,6 +52,19 @@ test-cleanup:
 
 test-verify:
 	python3 -m unittest tests.test_verify
+
+test-path-map:
+	python3 -m unittest tests.test_path_map
+
+# overlay/underlay 路径映射
+path-map:
+	python3 tools/path_map.py --config configs/parallel-min.json \
+		--network 1 --src bj_1 --dst sh_1
+
+path-map-golden:
+	python3 tools/path_map.py --config configs/parallel-min.json \
+		--network 1 --src bj_1 --dst sh_1 \
+		--out configs/expected/path-map-min.md
 
 # 功能验收：不需要 root，只校验用例与配置
 verify-dry:

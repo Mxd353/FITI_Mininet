@@ -380,6 +380,26 @@ make verify-full     # 41 站点
 报告写到 `runs/<时间戳>/`，失败用例会附带表项和路由 dump。
 详见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
 
+### 路径映射
+
+从同一份配置生成 overlay 业务路径和 underlay 物理路径对照表：
+
+```bash
+python3 tools/path_map.py --config configs/parallel-min.json \
+    --network 1 --src bj_1 --dst sh_1
+
+# 同站点两台主机
+python3 tools/path_map.py --config configs/parallel-min.json \
+    --network 1 --src bj_1 --same-site
+
+# 所有网络
+python3 tools/path_map.py --config configs/parallel-min.json \
+    --network all --src bj_1 --dst sh_1
+```
+
+输出逐段列出物理设备、封装（VLAN / SRv6 L3 / SRv6 L2 / IPv6 外层）和说明。
+基线文件：`configs/expected/path-map-min.md`。
+
 配置同源：仿真表项和真实设备 CLI 都由 `configs/parallel*.json` 生成。
 
 ```bash
@@ -422,7 +442,8 @@ verify/                     功能验收
 └── cases/                  验收用例
 
 tools/
-└── render_config.py        仿真/设备/OVS 配置渲染
+├── render_config.py        仿真/设备/OVS 配置渲染
+└── path_map.py             overlay/underlay 路径映射
 
 docs/
 ├── PARALLEL_NETWORK_DESIGN.md

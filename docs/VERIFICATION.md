@@ -197,6 +197,32 @@ PARALLEL_OVS_WORKERS=1 sudo python3 verify/runner.py ...       # 退回串行
 OVS 接入配置        17.3s -> 待实测（预计 3~4s）
 ```
 
+## 路径映射
+
+`tools/path_map.py` 从同一份配置生成“业务路径 → 物理路径 → 每段封装”的
+对照表，格式对应 UNIT bitmap 文档的 4.3/4.4：
+
+```bash
+python3 tools/path_map.py --config configs/parallel-min.json \
+    --network 1 --src bj_1 --dst sh_1
+
+python3 tools/path_map.py --config configs/parallel-min.json \
+    --network all --src bj_1 --dst sh_1 --format text
+
+python3 tools/path_map.py --config configs/parallel-min.json \
+    --network 1 --src bj_1 --dst sh_1 --format json
+```
+
+同站点两台主机：
+
+```bash
+python3 tools/path_map.py --config configs/parallel-min.json \
+    --network 1 --src bj_1 --same-site
+```
+
+当前输出会标注哪些段还没和文档对齐，例如同站点主机之间是 VLAN 直连，
+文档中的 VXLAN 段尚未建模。
+
 ## 失败排查
 
 `runs/<时间戳>/evidence/<用例>.txt` 包含：
