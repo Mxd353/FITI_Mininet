@@ -107,11 +107,27 @@ sudo python3 parallel_net.py --thrift-base 15000
 make parallel-stop
 ```
 
+会显示每一步的进度（等待 CLI 退出、停止 simple_switch、清理 Mininet、
+删除残留接口）：
+
+```text
+==> 停止并行网络
+  parallel_net.py ... 发送 SIGINT（PID 12345）
+  parallel_net.py 退出 ... 完成 (1.8s)
+  simple_switch ... 发送 SIGTERM（PID 12346,12347,...）
+  simple_switch 退出 ... 完成 (0.6s)
+  清理 Mininet 网络 ... 完成 (2.1s)
+  清理残留接口 ... 24 个
+  删除 agent socket ... 完成
+*** 清理完成，终端已恢复
+```
+
 它会清理：
 
 - `simple_switch`；
 - `parallel_net.py`；
 - Mininet 网络与 OVS bridge；
+- 残留的 `*-ethN` 接口；
 - `/tmp/parallel_evpn.sock`。
 
 注意：`parallel-stop` 里的 `mn -c` 会删除本机**所有** OVS bridge。

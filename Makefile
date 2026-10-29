@@ -95,21 +95,7 @@ parallel-run-no-cli-min: parallel-p4
 # 再升级到 TERM/KILL。pkill 模式用 [p]/[s] 防止匹配到 recipe 自己的 shell。
 parallel-stop:
 	-stty sane 2>/dev/null || true
-	-sudo pkill -INT -f '[p]arallel_net.py' || true
-	-@i=0; while [ $$i -lt 40 ] && pgrep -f '[p]arallel_net.py' >/dev/null 2>&1; do i=$$((i+1)); sleep 0.5; done
-	-sudo pkill -TERM -f '[p]arallel_net.py' || true
-	-@i=0; while [ $$i -lt 10 ] && pgrep -f '[p]arallel_net.py' >/dev/null 2>&1; do i=$$((i+1)); sleep 0.5; done
-	-sudo pkill -KILL -f '[p]arallel_net.py' || true
-	-sudo pkill -TERM -f '[s]imple_switch' || true
-	-@i=0; while [ $$i -lt 10 ] && pgrep -f '[s]imple_switch' >/dev/null 2>&1; do i=$$((i+1)); sleep 0.5; done
-	-sudo pkill -KILL -f '[s]imple_switch' || true
-	-sudo mn -c
-	-sudo python3 -m parallel.cleanup || true
-	-sudo rm -f /tmp/parallel_evpn.sock
-	-stty sane 2>/dev/null || true
-	-printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?2004l'
-	@echo
-	@echo "*** 清理完成，终端已恢复"
+	sudo python3 -m parallel.stop
 
 # 在终端不回显时手动执行：make fix-tty
 fix-tty:
