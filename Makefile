@@ -3,9 +3,10 @@ PARALLEL_P4_JSON  = build/parallel_vpn.json
 PARALLEL_P4INFO   = build/parallel_vpn.p4info.txt
 
 .PHONY: all clean parallel-p4 parallel-dump parallel-evpn-dump \
-        parallel-dump-min parallel-evpn-dump-min test test-evpn test-ovs \
-        test-verify verify-dry verify-min verify-full verify-isolation \
-        verify-faults render-config \
+        parallel-dump-min parallel-evpn-dump-min test test-config test-evpn \
+        test-ovs test-control test-cleanup test-verify test-path-map \
+        verify-dry verify-min verify-full verify-isolation verify-faults \
+        render-config path-map path-map-golden \
         parallel-run parallel-run-no-cli parallel-run-min \
         parallel-run-no-cli-min parallel-stop fix-tty
 
@@ -35,8 +36,11 @@ parallel-dump-min:
 parallel-evpn-dump-min:
 	python3 parallel_evpn.py --config configs/parallel-min.json --dump --validate
 
-test: test-evpn test-ovs test-control test-cleanup test-verify \
+test: test-config test-evpn test-ovs test-control test-cleanup test-verify \
       test-path-map
+
+test-config:
+	python3 -m unittest tests.test_config
 
 test-evpn:
 	python3 -m unittest tests.test_evpn

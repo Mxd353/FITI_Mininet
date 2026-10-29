@@ -337,6 +337,30 @@ class CaseRunner(object):
         return '\n'.join(lines)
 
 
+def wait_for_ready(net, cfg, timeout=30.0, interval=0.5):
+    """Wait until every cloud endpoint finished IPv6 duplicate detection.
+
+    端点地址刚加上时处于 tentative 状态，此时 `ping -I <地址>` 会直接报
+    ``bind icmp socket: Cannot assign requested address``。等所有端点都不再
+    有 tentative 地址后再开始跑用例，避免前几条用例假失败。
+    """
+    from parallel.topology import cloud_name
+
+    hosts = [net.get(cloud_name(site, host_id))
+             for site in cfg.sites for host_id in cfg.host_ids()]
+    deadline = time.time() + timeout
+    while True:
+        pending = []
+        for host in hosts:
+            if host is None:
+                continue
+            if 'tentative' in host.cmd('ip -6 addr show'):
+                pending.append(host.name)
+        if not pending or time.time() >= deadline:
+            return pending
+        time.sleep(interval)
+
+
 def _run(args, cfg, cases, reporter=None):
     if os.geteuid() != 0:
         raise SystemExit('功能验证会启动 Mininet，需要用 sudo 运行')
@@ -357,6 +381,12 @@ def _run(args, cfg, cases, reporter=None):
         # Give OVS/bmv2 a moment to settle before the first case.
         if args.settle:
             time.sleep(args.settle)
+        pending = wait_for_ready(net, cfg)
+        if pending:
+            print('*** 警告：%d 台主机的端点地址仍是 tentative: %s'
+                  % (len(pending), ' '.join(sorted(pending)[:6])))
+        elif not args.quiet:
+            print('*** 端点地址已就绪')
         runner = CaseRunner(net, cfg, agent)
         available = {site.abbr for site in cfg.sites}
         for index, case in enumerate(cases, 1):

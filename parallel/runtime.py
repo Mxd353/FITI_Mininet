@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import socket
+import subprocess
 
 from mininet.link import TCLink
 from mininet.net import Mininet
@@ -18,6 +19,27 @@ from parallel.p4 import compile_p4
 from parallel.switch import make_switch_factory
 from parallel.topology import (ParallelTopology, a_name, c_name,
                                switch_ids)
+
+
+#: 内核模块。非初始 netns 里的设备创建不会触发模块自动加载
+#: （request_module 需要初始 netns 的 CAP_SYS_MODULE），
+#: 所以必须在启动前显式加载，否则会报 "Unknown device type"。
+KERNEL_MODULES = ('macvlan', 'vxlan', '8021q', 'openvswitch')
+
+
+def ensure_kernel_modules():
+    """Load the device modules the topology needs."""
+    missing = []
+    for module in KERNEL_MODULES:
+        result = subprocess.run(['modprobe', module],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            missing.append('%s: %s' % (module,
+                                       (result.stderr or '').strip() or
+                                       'modprobe 失败'))
+    if missing:
+        raise RuntimeError('内核模块加载失败（云主机端点需要 macvlan）：%s'
+                           % '; '.join(missing))
 
 
 def _port_free(port):
@@ -88,6 +110,7 @@ def build_parallel_net(cfg: ParallelConfig, json_path=None,
                 '请先 make parallel-stop'
                 % ', '.join(str(pid) for pid in running))
         cleanup_stale_links()
+        ensure_kernel_modules()
         json_path = compile_p4(out=json_path)
     base = int(thrift_base if thrift_base is not None else cfg.thrift_base)
     requested_base = base

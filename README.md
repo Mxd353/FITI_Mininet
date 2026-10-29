@@ -485,8 +485,9 @@ parallel_evpn_ctl.py        agent 客户端
 - 动态 agent 只支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；
 - 接入交换机是 OVS，L2 转发靠 MAC 学习，不是 EVPN 下发的静态 FIB；
 - 41 台 BMv2 仍然占用较多资源，全量启动较慢；
-- 每站点 2 主机 × 2 端点会产生 166 个 netns、328 个 macvlan、656 张路由表，
-  41 站点全量启动较重，建议先用 4 站点验证；
+- 每站点 2 主机 × 2 端点会产生 166 个 netns、328 个 macvlan、656 张路由表；
+  41 站点全量已实测可跑通（峰值内存约 4.2 GB，启动约 1 分钟），
+  调试时仍建议先用 4 站点；
 - 宿主机 OVS/VXLAN 段尚未建模，同站点端点之间是 VLAN 二层转发；
 - 每台主机有 8 个 macvlan 端点、16 张策略路由表，端点增多时表项和规则数量线性增长；
 - L2 远端主机之间依赖 ND 解析，不再逐主机下发静态邻居；
@@ -534,11 +535,35 @@ sudo python3 -m parallel.cleanup             # 删除
 ### `Network is unreachable`
 
 ```text
-cl_bj_1 ip -6 addr show v3501
+cl_bj_1 ip -6 addr show ep_bj_1_1_1
 cl_bj_1 ip -6 rule show
-cl_bj_1 ip -6 route show table 20001
-cl_bj_1 ip -6 route get 240a:a806:1:2::10
+cl_bj_1 ip -6 route show table 20016
+cl_bj_1 ip -6 route get 240a:a806:1:2::10 from 240a:a806:1:1::10
 ```
+
+按源地址查表，所以 `route get` 和 `ping` 都要带 `from` / `-I <源地址>`；
+只写 `ip -6 route get <目的>` 会走主表，看不到端点自己的表。
+
+### `ip link add ... type macvlan` 报 `Unknown device type`
+
+内核模块没有加载。非初始 namespace 里的设备创建不会触发模块自动加载，
+所以启动脚本会先 `modprobe`。手动确认：
+
+```bash
+sudo modprobe macvlan
+lsmod | grep macvlan
+```
+
+### `ping` 报 `bind: Cannot assign requested address`
+
+端点地址还在 IPv6 重复地址检测（tentative）阶段。等 1-2 秒即可；
+`verify/runner.py` 会自动等所有端点离开 tentative 再开始跑用例。
+
+### 启动报 `name not a valid ifname`
+
+站点简称太长：Mininet 的接口名是 `<节点名>-ethN`，上限 15 字节。
+`cl_<站点>_<序号>-eth0` 超长时会在建 veth 时失败（例如 6 个字母的简称）。
+`configs/*.json` 加载时会提前校验并报错，遇到时把站点简称改短。
 
 ### agent 连接失败
 

@@ -310,9 +310,12 @@ def _install_one_switch(net, name, cmds, groups):
         switch_cli(thrift_port, associations)
 
 
+IP_ERRORS = ('RTNETLINK', 'Error:', 'Cannot find device')
+
+
 def _run_ip(host, command, context):
     output = host.cmd(command)
-    if 'RTNETLINK' in output or 'Error:' in output:
+    if any(marker in output for marker in IP_ERRORS):
         raise RuntimeError('%s: %s 失败: %s'
                            % (host.name, context, output.strip()))
     return output
@@ -323,7 +326,7 @@ def _set_addr(host, intf, address, noprefixroute=False):
     extra = ' noprefixroute' if noprefixroute else ''
     output = host.cmd('ip -6 addr replace %s dev %s%s'
                       % (address, name, extra))
-    if 'RTNETLINK' in output or 'Error:' in output:
+    if any(marker in output for marker in IP_ERRORS):
         raise RuntimeError('%s: 配置地址 %s 失败: %s'
                            % (host.name, address, output.strip()))
 
@@ -335,18 +338,21 @@ def _configure_cloud_host(net, cfg, site, host_id):
     for network in cfg.networks_for_site(site):
         uplink = cfg.vlan_ifname(network)
         cloud.cmd('ip link del %s 2>/dev/null || true' % uplink)
-        cloud.cmd('ip link add link %s name %s type vlan id %d'
-                  % (parent.name, uplink, network.vlan))
-        cloud.cmd('ip link set dev %s up' % uplink)
+        _run_ip(cloud,
+                'ip link add link %s name %s type vlan id %d'
+                % (parent.name, uplink, network.vlan), '创建 VLAN 子接口')
+        _run_ip(cloud, 'ip link set dev %s up' % uplink, '启用 VLAN 子接口')
         for endpoint in cfg.endpoint_ids():
             ifname = cfg.endpoint_ifname(site, host_id, endpoint, network)
             cloud.cmd('ip link del %s 2>/dev/null || true' % ifname)
-            cloud.cmd('ip link add link %s name %s type macvlan mode bridge'
-                      % (uplink, ifname))
-            cloud.cmd('ip link set dev %s address %s'
-                      % (ifname, cfg.cloud_mac(network, site, host_id,
-                                               endpoint)))
-            cloud.cmd('ip link set dev %s up' % ifname)
+            _run_ip(cloud,
+                    'ip link add link %s name %s type macvlan mode bridge'
+                    % (uplink, ifname), '创建 macvlan 端点')
+            _run_ip(cloud,
+                    'ip link set dev %s address %s'
+                    % (ifname, cfg.cloud_mac(network, site, host_id,
+                                             endpoint)), '设置端点 MAC')
+            _run_ip(cloud, 'ip link set dev %s up' % ifname, '启用端点')
 
 
 def _configure_cloud_interfaces(net, cfg):

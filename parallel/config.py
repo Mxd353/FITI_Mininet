@@ -312,6 +312,8 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     fiti_topology = os.path.abspath(fiti_topology)
     if not os.path.isfile(fiti_topology):
         raise ValueError('找不到 FITI 拓扑文件: %s' % fiti_topology)
+    _check_ifname_length(sites, networks, hosts_per_site,
+                         endpoints_per_host)
     fiti = load_fiti_topology(fiti_topology)
     missing = [site.abbr for site in sites
                if site.abbr not in fiti.nodes]
@@ -332,6 +334,40 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         hosts_per_site=hosts_per_site,
         endpoints_per_host=endpoints_per_host,
     )
+
+
+#: Linux 接口名上限（IFNAMSIZ - 1）。
+IFNAME_MAX = 15
+
+
+def _check_ifname_length(sites, networks, hosts_per_site,
+                         endpoints_per_host):
+    """Fail early when a site abbreviation makes interface names too long.
+
+    Mininet 生成的接口名是 ``<节点名>-ethN``，节点名本身来自站点简称；
+    超过 15 字节时 ``ip link`` 会报 "name not a valid ifname"。
+    """
+    max_network = max((network.id for network in networks), default=1)
+    problems = []
+    for site in sites:
+        node_names = ['S1_%s-eth2' % site.abbr, 'S2_%s-eth2' % site.abbr,
+                      'E_%s-eth1' % site.abbr, 'A_%s-eth1' % site.abbr,
+                      'C_%s-eth1' % site.abbr]
+        problems.extend(name for name in node_names
+                        if len(name) > IFNAME_MAX)
+        for host_id in range(1, int(hosts_per_site) + 1):
+            cloud = 'cl_%s_%d-eth0' % (site.abbr, host_id)
+            if len(cloud) > IFNAME_MAX:
+                problems.append(cloud)
+        for endpoint in range(1, int(endpoints_per_host) + 1):
+            for network_id in (1, max_network):
+                name = 'ep_%s_%d_%d_%d' % (site.abbr, int(hosts_per_site),
+                                           endpoint, network_id)
+                if len(name) > IFNAME_MAX:
+                    problems.append(name)
+    if problems:
+        raise ValueError('站点简称过长，接口名超过 %d 字节: %s'
+                         % (IFNAME_MAX, ', '.join(sorted(set(problems))[:4])))
 
 
 def dump_config(cfg: ParallelConfig) -> None:

@@ -144,10 +144,11 @@ cases:
   - name: bum-net3
     tags: [core, l2]
     requires_sites: [sh]
+    description: 链路本地组播必须绑网卡而不是源地址，否则内核选不到出接口
     steps:
       - type: ping
         node: cl_bj_1
-        iface: 240a:a806:3:1::100
+        iface: ep_bj_1_1_3
         target: ff02::1
         count: 3
         min_received: 1
