@@ -34,7 +34,12 @@ cases:
   - name: iso-l2-net3-to-net4
     tags: [core, isolation]
     requires_sites: [sh]
+    description: L2 切片之间没有路由，由主机侧拒绝（网络侧不参与）
     steps:
+      - type: exec
+        node: cl_bj
+        command: ip -6 route get 240a:a806:4:1::11 from 240a:a806:3:1::10
+        expect_contains: unreachable
       - type: ping
         node: cl_bj
         iface: v3503
@@ -44,6 +49,7 @@ cases:
   - name: iso-l3-net2-to-net1
     tags: [core, isolation]
     requires_sites: [sh]
+    description: 用源地址绑定，确保报文真的发出并在 E 的 VRF 被丢弃
     steps:
       - type: exec
         node: cl_sh
@@ -51,6 +57,6 @@ cases:
         expect_not_contains: unreachable
       - type: ping
         node: cl_sh
-        iface: v3502
+        iface: 240a:a806:2:2::10
         target: 240a:a806:1:1::10
         expect: fail

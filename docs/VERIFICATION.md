@@ -102,9 +102,19 @@ cases:
 `ping` 会先发一个预热包，再发 `count` 个；`expect: pass` 失败时默认重试一次
 （`retries: 1`），避免冷启动的 FDB/ND 抖动造成误判。
 
-`ping6` 报 `Network is unreachable` 时视为 100% 不可达：L2 切片之间本来就没有
-路由，这是合法结果；L3 之间的隔离由 `iso-l3-net1-to-net2` 验证（报文确实发出，
-在 E 的 VRF 被丢弃）。
+`ping6` 报 `Network is unreachable` 时视为 100% 不可达。
+
+两种隔离要区分：
+
+```text
+L3 之间    报文实际发出，在 E 的 VRF 查不到对端前缀被丢弃
+           iso-l3-net1-to-net2 / iso-l3-net1-to-l2 / iso-l3-net2-to-net1
+L2 之间    主机上没有跨切片路由，主机侧直接拒绝
+           iso-l2-net3-to-net4（用例显式断言 route get 为 unreachable）
+```
+
+`iso-l3-net2-to-net1` 用源地址（`-I 240a:a806:2:2::10`）绑定，而不是网卡名，
+避免“设备与路由表不匹配”导致主机侧提前拒绝，确保测的是网络侧丢弃。
 
 ## 需求追溯矩阵
 
