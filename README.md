@@ -154,6 +154,21 @@ cl_bj_1                    cl_bj_2
 L2 扁平 /64 下，第二台主机使用高位偏移（如 `::110`、`::111`），
 避免和第一台主机的地址冲突。
 
+每台主机内部有一个按网络划分的 Linux bridge，代替文档中的宿主机 OVS：
+
+```text
+cl_bj_1
+└── br_bj_1_1
+    ├── tp_bj_1_1   租户接口，承载业务地址
+    ├── v3501       到 S1 的 VLAN 上行
+    └── vx_bj_1_1   VXLAN VTEP（VNI = 网络 ID）
+```
+
+- 同站点两台主机之间走 VXLAN，外层使用 VLAN 4000 作为 underlay；
+- 出站点的流量仍然走 VLAN 到 E，再由 E 做 SRv6；
+- 主机桥用静态 FDB 固定 E 和远端主机的 MAC，避免未知单播在
+  VXLAN 与上联之间来回泛洪。
+
 - S1/S2 到云服务器使用 trunk；
 - L3 网络使用按源地址和目的前缀分流的策略路由；
 - L2 网络使用 VLAN 子接口和静态远端邻居；
@@ -397,7 +412,8 @@ python3 tools/path_map.py --config configs/parallel-min.json \
     --network all --src bj_1 --dst sh_1
 ```
 
-输出逐段列出物理设备、封装（VLAN / SRv6 L3 / SRv6 L2 / IPv6 外层）和说明。
+输出逐段列出物理设备、封装（VLAN / VXLAN / SRv6 L3 / SRv6 L2 / IPv6 外层）
+和说明。同站点会显示宿主机 bridge 和 VXLAN 段，跨站点显示 VLAN → SRv6 → VLAN。
 基线文件：`configs/expected/path-map-min.md`。
 
 配置同源：仿真表项和真实设备 CLI 都由 `configs/parallel*.json` 生成。
@@ -467,6 +483,9 @@ parallel_evpn_ctl.py        agent 客户端
 - 动态 agent 只支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；
 - 接入交换机是 OVS，L2 转发靠 MAC 学习，不是 EVPN 下发的静态 FIB；
 - 41 台 BMv2 仍然占用较多资源，全量启动较慢；
+- 宿主机 VXLAN 目前只支持每站点 2 台主机；
+- 宿主机桥使用静态 FDB，主机或站点增多时启动时间明显增加；
+- VXLAN/SRv6 封装有额外开销，大包需要调整 MTU；
 
 ## 故障排查
 

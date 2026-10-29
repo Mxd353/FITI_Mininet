@@ -164,7 +164,7 @@ Python 控制面           负责生成并下发 E 的静态 P4 表项、配置 
 | S2_bj / S2_sh / S2_gz / S2_cd | OVS | 站点接入交换机，上行拒绝并行网络 VLAN |
 | C_bj / C_sh / C_gz / C_cd | Linux netns | 传统核心路由器，IPv6 转发/静态路由 |
 | A_bj / A_sh / A_gz / A_cd | Linux netns | 传统汇聚路由器 |
-| cl-* | Linux netns | 云计算服务器，每站点 2 台 |
+| cl-* | Linux netns | 云计算服务器，每站点 2 台；每台带 Linux bridge + VXLAN VTEP |
 | pub_border / fix | Linux netns | 公网边界，BGP/静态路由、前缀过滤；`pub_border` 是短名，避免接口名超过 15 字符 |
 
 这样：
@@ -210,6 +210,8 @@ Python 控制面           负责生成并下发 E 的静态 P4 表项、配置 
 - C 路由按 FITI 图的最短路径计算下一跳；
 - `C_bj` 同时连接公网边界；
 - 每站点两台云服务器，每台通过 S1/S2 trunk 上的 VLAN 子接口区分切片；
+- 每台云主机内部用 Linux bridge 连接租户 veth、VLAN 上联和 VXLAN VTEP，
+  同站点主机之间为 VXLAN（VNI = 网络 ID），出站点仍为 VLAN；
 - 每站点 `E` 是 BMv2/P4，`S1`/`S2` 是 OVS，`C`/`A`/cloud 是 netns；
 - L3VPN 网络 1/2 覆盖全部 41 站点；
 - L2VPN 网络 3/4 覆盖全部 41 站点；已知单播按远端 MAC 选择 SID，BUM

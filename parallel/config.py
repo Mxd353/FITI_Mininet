@@ -91,6 +91,27 @@ class ParallelConfig:
         """Short Linux VLAN subinterface name inside the cloud netns."""
         return 'v%d' % network.vlan
 
+    def tenant_ifname(self, site: Site, host: int,
+                      network: Network) -> str:
+        """Host-side tenant interface (bridge port when VXLAN is enabled)."""
+        if int(self.hosts_per_site) <= 1:
+            return self.vlan_ifname(network)
+        return 'tp_%s_%d_%d' % (site.abbr, int(host), network.id)
+
+    def bridge_name(self, site: Site, host: int, network: Network) -> str:
+        return 'br_%s_%d_%d' % (site.abbr, int(host), network.id)
+
+    def vxlan_ifname(self, site: Site, host: int, network: Network) -> str:
+        return 'vx_%s_%d_%d' % (site.abbr, int(host), network.id)
+
+    @staticmethod
+    def underlay_ifname() -> str:
+        return 'u4000'
+
+    @staticmethod
+    def underlay_address(site: Site, host: int) -> str:
+        return '10.0.%d.%d' % (int(site.id), int(host))
+
     def host_ids(self):
         """Host indexes inside one site (1..hosts_per_site)."""
         return range(1, int(self.hosts_per_site) + 1)

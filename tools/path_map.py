@@ -52,15 +52,35 @@ def build_segments(cfg: ParallelConfig, network, src, dst):
         segments.append({'from': left, 'to': right,
                          'encap': encap, 'note': note})
 
-    add(src_name, 'S1_%s' % src_site.abbr, 'VLAN %d' % vlan, '接入')
+    multi = cfg.hosts_per_site > 1
+    src_br = cfg.bridge_name(src_site, src_host, network)
+    dst_br = cfg.bridge_name(dst_site, dst_host, network)
+    if multi:
+        add(src_name, src_br, '原始以太网', '宿主机桥接入')
+        src_edge = src_br
+    else:
+        src_edge = src_name
+
     if src_site.abbr == dst_site.abbr:
-        add('S1_%s' % src_site.abbr, dst_name, 'VLAN %d' % vlan,
-            '同站点二层转发，不经过 E；文档中该段为 VXLAN，当前未建模')
+        if multi:
+            add(src_edge, 'S1_%s' % src_site.abbr,
+                'VXLAN VNI %d（外层 VLAN 4000）' % network.id,
+                'VTEP 封装')
+            add('S1_%s' % src_site.abbr, dst_br,
+                'VXLAN VNI %d' % network.id,
+                '站点交换机转发 VXLAN')
+            add(dst_br, dst_name, '原始以太网', 'VTEP 解封装')
+        else:
+            add(src_edge, 'S1_%s' % src_site.abbr,
+                'VLAN %d' % vlan, '接入')
+            add('S1_%s' % src_site.abbr, dst_name, 'VLAN %d' % vlan,
+                '同站点二层转发，不经过 E')
         return segments, {
             'inner': '%s → %s' % (inner_src, inner_dst),
             'note': 'same-site',
         }
 
+    add(src_edge, 'S1_%s' % src_site.abbr, 'VLAN %d' % vlan, '接入')
     add('S1_%s' % src_site.abbr, 'E_%s' % src_site.abbr,
         'VLAN %d' % vlan, '上行到 PE')
 
@@ -87,7 +107,12 @@ def build_segments(cfg: ParallelConfig, network, src, dst):
         'IPv6 外层（SRv6）', '到达目的 PE')
     add('E_%s' % dst_site.abbr, 'S1_%s' % dst_site.abbr,
         'VLAN %d' % vlan, decap_note)
-    add('S1_%s' % dst_site.abbr, dst_name, 'VLAN %d' % vlan, '交付')
+    if multi:
+        add('S1_%s' % dst_site.abbr, dst_br, 'VLAN %d' % vlan,
+            '进入宿主机桥')
+        add(dst_br, dst_name, '原始以太网', '交付')
+    else:
+        add('S1_%s' % dst_site.abbr, dst_name, 'VLAN %d' % vlan, '交付')
 
     return segments, {
         'inner': '%s → %s' % (inner_src, inner_dst),

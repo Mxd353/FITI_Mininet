@@ -6,7 +6,8 @@ import re
 import unittest
 
 from parallel.config import load_config
-from parallel.ovs import (ALL_VLANS, NON_PARALLEL_VLANS, PARALLEL_VLAN_MIN,
+from parallel.ovs import (ALL_VLANS, E_UPLINK_VLANS, NON_PARALLEL_VLANS,
+                          PARALLEL_VLAN_MIN,
                           configure_ovs_switches, set_trunk, trunk_vlans)
 from parallel.topology import (ParallelTopology, a_name, cloud_name, e_name,
                                s1_name, s2_name)
@@ -128,7 +129,8 @@ class OvsConfigTest(unittest.TestCase):
             s1 = self.net.get(s1_name(site))
             s2 = self.net.get(s2_name(site))
 
-            expected_s1 = [ALL_VLANS] * (1 + len(list(self.cfg.host_ids())))
+            expected_s1 = ([E_UPLINK_VLANS]
+                           + [ALL_VLANS] * len(list(self.cfg.host_ids())))
             self.assertEqual(sorted(s1.trunks.values()),
                              sorted(expected_s1))
 

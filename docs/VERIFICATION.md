@@ -141,6 +141,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | VLAN 接入与过滤 | 线速转发、队列、缓存 |
 | VRF/VSI 隔离 | 真实 BGP 邻居与 NLRI |
 | SRv6 封装/解封装语义 | SRv6 压缩 SID、TE |
+| 宿主机桥与 VXLAN 段 | 大规模 VTEP、组播 VXLAN |
 | 表项内容与容量 | 控制面收敛时间 |
 | 动态路由增删 | 多控制器主备 |
 | 链路 up/down | 路由自动收敛（当前是静态路由） |
@@ -220,8 +221,8 @@ python3 tools/path_map.py --config configs/parallel-min.json \
     --network 1 --src bj_1 --same-site
 ```
 
-当前输出会标注哪些段还没和文档对齐，例如同站点主机之间是 VLAN 直连，
-文档中的 VXLAN 段尚未建模。
+同站点主机会显示宿主机 bridge 和 VXLAN 段；跨站点显示
+VLAN → SRv6 → VLAN。
 
 ## 失败排查
 

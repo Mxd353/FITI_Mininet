@@ -33,21 +33,23 @@ class PathMapTest(unittest.TestCase):
         self.assertIn('C_bj → C_tjn', devices)
         self.assertIn('C_tjn → C_jnn', devices)
         self.assertIn('C_jnn → C_sh', devices)
-        self.assertIn('SRv6 L3', segments[2]['encap'])
-        self.assertIn('fd00:0:1:1::1:1', segments[2]['encap'])
-        self.assertIn('fd00:0:2:1::1:1', segments[2]['encap'])
+        encap = ' '.join(item['encap'] for item in segments)
+        self.assertIn('SRv6 L3', encap)
+        self.assertIn('fd00:0:1:1::1:1', encap)
+        self.assertIn('fd00:0:2:1::1:1', encap)
         self.assertIn('240a:a806:1:2::10', info['inner'])
 
     def test_cross_site_l2_uses_l2_sid(self):
         segments, _ = _segments(self.cfg, 3, 'bj_1', 'sh_1')
-        self.assertIn('SRv6 L2', segments[2]['encap'])
-        self.assertIn('fd00:0:1:1::2:3', segments[2]['encap'])
+        encap = ' '.join(item['encap'] for item in segments)
+        self.assertIn('SRv6 L2', encap)
+        self.assertIn('fd00:0:1:1::2:3', encap)
 
     def test_same_site_is_two_l2_segments(self):
         segments, _ = _segments(self.cfg, 1, 'bj_1', 'bj_2')
-        self.assertEqual(len(segments), 2)
-        self.assertIn('VXLAN', segments[1]['note'])
-        self.assertEqual(segments[1]['to'], 'cl_bj_2')
+        self.assertEqual(len(segments), 4)
+        self.assertIn('VXLAN', segments[2]['encap'])
+        self.assertEqual(segments[-1]['to'], 'cl_bj_2')
 
     def test_host_parsing(self):
         site, host, name = parse_host(self.cfg, 'cl_sh_2')
