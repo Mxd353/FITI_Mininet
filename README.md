@@ -172,7 +172,8 @@ MAC：02:{站点}:{网络高}{网络低}:{主机}:{端点}
   避免同一主机多个端点争抢同一个 /64 前缀路由；
 - 同一主机的两个端点由 macvlan bridge 模式内部互通；
 - 同站点不同主机由 S1 二层转发，不经过 E；
-- 出站点仍为 VLAN → SRv6；
+- 出站点仍为 VLAN → SRv6；L2VPN 隧道内层不带业务 VLAN，
+  对端 E 解封装后按自己的 VSI 重新打上（与真实 `dot1q` 子接口一致）；
 - 文档中的宿主机 OVS/VXLAN 段暂未建模。
 
 ## 接入交换机（OVS）
@@ -380,7 +381,7 @@ make parallel-stop            # 清理
 ```bash
 make parallel-stop
 make verify-dry
-make verify-min      # 4 站点，34 条用例
+make verify-min      # 4 站点，35 条用例
 make verify-full     # 41 站点
 ```
 

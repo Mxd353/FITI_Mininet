@@ -7,7 +7,7 @@
 ```bash
 make parallel-stop      # 清理旧实例
 make verify-dry         # 免 root，只校验用例与配置
-make verify-min         # 4 站点，34 条用例（故障用例需 --tag faults）
+make verify-min         # 4 站点，35 条用例（故障用例需 --tag faults）
 make verify-full        # 41 站点
 ```
 
@@ -50,7 +50,7 @@ IPv6 接口 down 之后地址和路由会被删除，up 也不会自动恢复，
 
 | 文件 | 内容 | 数量 |
 | --- | --- | --- |
-| `01-reachability.yaml` | L3VPN/L2VPN 同网络互通、多端点、BUM、公网 | 15 |
+| `01-reachability.yaml` | L3VPN/L2VPN 同网络互通、多端点、BUM、公网、隧道报文格式 | 16 |
 | `02-isolation.yaml` | 跨网络必须 100% 丢包 | 4 |
 | `03-vlan.yaml` | S1 放行、S2 拒绝并行 VLAN | 4 |
 | `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 9 |
@@ -122,9 +122,9 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 
 | 配置 | 规模 | 结果 | 说明 |
 | --- | --- | --- | --- |
-| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 34/34 通过 | 用例耗时约 48 秒 |
+| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 35/35 通过 | 用例耗时约 54 秒 |
 | `parallel-min.json --tag faults` | 同上 | 1/1 通过 | netem 注入 100% 丢包后恢复 |
-| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 34/34 通过 | 用例耗时约 53 秒，峰值内存约 4.2 GB |
+| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 35/35 通过 | 用例耗时约 60 秒，峰值内存约 4.2 GB |
 
 失败用例会自动 dump 相关节点的 `ip -6 route/rule/addr` 和 P4 表项，
 放在 `runs/<时间戳>/evidence/`。
@@ -140,6 +140,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | L3VPN 跨网络隔离 | `iso-*` | ping 100% loss |
 | L2VPN 同广播域 | `l2vpn-*` | ping |
 | L2VPN VNI 隔离 | `iso-l2-net3-to-net4` | ping 100% loss |
+| L2VPN 隧道内层不带业务 VLAN | `l2-tunnel-no-inner-vlan` | `C_bj` 抓 SRv6 包，内层无 `vlan` |
 | BUM 复制 | `bum-net3` | ff02::1 |
 | 公网接入 | `public-fix` | ping FIX |
 | SRv6 SID 安装 | `e-bj-local-sid-*` | `local_sid` |

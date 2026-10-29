@@ -393,21 +393,16 @@ control IngressImpl(inout headers_t hdr,
 
     action srv6_l2_encap(bit<128> src_sid, bit<128> dst_sid,
                          bit<48> smac, bit<48> dmac, bit<9> port) {
+        // dot1q 子接口终结业务 VLAN，隧道内层不带 802.1Q；
+        // 对端 E 解封装时按 VSI 的 VLAN 重新打上。
         bit<16> overhead = 78;
         hdr.inner_ethernet.setValid();
         hdr.inner_ethernet.dstAddr = hdr.ethernet.dstAddr;
         hdr.inner_ethernet.srcAddr = hdr.ethernet.srcAddr;
-        hdr.inner_ethernet.etherType = hdr.ethernet.etherType;
-        if (hdr.vlan.isValid()) {
-            hdr.inner_vlan.setValid();
-            hdr.inner_vlan.pcp = hdr.vlan.pcp;
-            hdr.inner_vlan.dei = hdr.vlan.dei;
-            hdr.inner_vlan.vid = hdr.vlan.vid;
-            hdr.inner_vlan.etherType = hdr.vlan.etherType;
-            overhead = 82;
-        } else {
-            hdr.inner_vlan.setInvalid();
-        }
+        hdr.inner_ethernet.etherType = hdr.vlan.isValid() ?
+                                       hdr.vlan.etherType :
+                                       hdr.ethernet.etherType;
+        hdr.inner_vlan.setInvalid();
         hdr.inner_ipv6.setValid();
         hdr.inner_ipv6.version = hdr.ipv6.version;
         hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
@@ -451,16 +446,25 @@ control IngressImpl(inout headers_t hdr,
         standard_metadata.egress_spec = port;
     }
 
-    action srv6_l2_decap(bit<9> port) {
+    action srv6_l2_decap(bit<9> port, bit<12> vlan) {
         hdr.ethernet.dstAddr = hdr.inner_ethernet.dstAddr;
         hdr.ethernet.srcAddr = hdr.inner_ethernet.srcAddr;
         hdr.ethernet.etherType = hdr.inner_ethernet.etherType;
         if (hdr.inner_vlan.isValid()) {
+            // 对端显式带了内层 VLAN（例如对接真实设备）时按报文里的值恢复。
             hdr.vlan.setValid();
             hdr.vlan.pcp = hdr.inner_vlan.pcp;
             hdr.vlan.dei = hdr.inner_vlan.dei;
             hdr.vlan.vid = hdr.inner_vlan.vid;
             hdr.vlan.etherType = hdr.inner_vlan.etherType;
+        } else if (vlan != VLAN_NONE) {
+            // 隧道内层不带 VLAN：按本 VSI 的业务 VLAN 打回去。
+            hdr.vlan.setValid();
+            hdr.vlan.pcp = 0;
+            hdr.vlan.dei = 0;
+            hdr.vlan.vid = vlan;
+            hdr.vlan.etherType = hdr.ethernet.etherType;
+            hdr.ethernet.etherType = ETHERTYPE_VLAN;
         } else {
             hdr.vlan.setInvalid();
         }
@@ -747,17 +751,10 @@ control EgressImpl(inout headers_t hdr,
         hdr.inner_ethernet.setValid();
         hdr.inner_ethernet.dstAddr = hdr.ethernet.dstAddr;
         hdr.inner_ethernet.srcAddr = hdr.ethernet.srcAddr;
-        hdr.inner_ethernet.etherType = hdr.ethernet.etherType;
-        if (hdr.vlan.isValid()) {
-            hdr.inner_vlan.setValid();
-            hdr.inner_vlan.pcp = hdr.vlan.pcp;
-            hdr.inner_vlan.dei = hdr.vlan.dei;
-            hdr.inner_vlan.vid = hdr.vlan.vid;
-            hdr.inner_vlan.etherType = hdr.vlan.etherType;
-            overhead = 82;
-        } else {
-            hdr.inner_vlan.setInvalid();
-        }
+        hdr.inner_ethernet.etherType = hdr.vlan.isValid() ?
+                                       hdr.vlan.etherType :
+                                       hdr.ethernet.etherType;
+        hdr.inner_vlan.setInvalid();
         if (hdr.ipv6.isValid()) {
             hdr.inner_ipv6.setValid();
             hdr.inner_ipv6.version = hdr.ipv6.version;

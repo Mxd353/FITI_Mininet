@@ -131,6 +131,27 @@ cases:
         target: 240a:a806:3:1::104
         expect: pass
 
+  - name: l2-tunnel-no-inner-vlan
+    tags: [core, l2, packet]
+    requires_sites: [sh]
+    description: 隧道内层不带业务 VLAN，E 解封装后按 VSI 重新打上
+    steps:
+      - type: exec
+        node: C_bj
+        command: sh -c 'rm -f /tmp/l2cap.pcap; setsid timeout 8 tcpdump -i any -U -s0 -w /tmp/l2cap.pcap "ip6 and proto 43 and src host fd00:0:1:1::2:3" >/dev/null 2>&1 & sleep 1'
+      - type: ping
+        node: cl_bj_1
+        iface: 240a:a806:3:1::100
+        target: 240a:a806:3:1::104
+        expect: pass
+      - type: sleep
+        seconds: 3
+      - type: exec
+        node: C_bj
+        command: tcpdump -r /tmp/l2cap.pcap -nn -vv
+        expect_contains: "echo request"
+        expect_not_contains: "vlan"
+
   - name: l2vpn-net3-bj-tjn
     tags: [core, l2]
     requires_sites: [tjn]

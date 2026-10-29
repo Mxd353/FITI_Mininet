@@ -340,22 +340,22 @@ IPv6       src = 本端 L3 SID fd00:0:1:1::1:1
 Ethernet   外层 untagged
 IPv6       src/dst = 本端/远端 L2 SID fd00:0:{站点}:1::2:{网络}
            nextHdr = 43，hopLimit = 64
-           payloadLen = 内层 payloadLen + 78（内层带 VLAN 时 +82）
+           payloadLen = 内层 payloadLen + 78
   SRH      nextHdr = 143（Ethernet），其余字段同 L3VPN
-    Ethernet   内层，原 dst/src MAC
-      VLAN     内层业务 VLAN（vid = 3500 + 网络 ID）
-        IPv6   内层业务报文，TTL 不变
+    Ethernet   内层，原 dst/src MAC，etherType = 0x86dd
+      IPv6   内层业务报文，TTL 不变
 ```
+
+业务 VLAN 在 E 的 `dot1q` 子接口上终结，隧道内层**不带 802.1Q**；
+对端 E 命中 `local_sid` 后按本 VSI 的 VLAN 重新打上，再送 S1，
+所以宿主机侧看到的仍然是带 VLAN 的原始帧。这与真实设备
+`vlan-type dot1q` + `xconnect vsi` 的行为一致。
 
 BUM 帧走同一格式，只是外层 dst 由 `l2_rep_sid` 按 egress_rid 逐站点选择，
 并且 SRH 的 `segmentsLeft = 0`（不逐跳处理 SRH，只按 DA 命中 `local_sid`）。
 
 外层 DSCP：L3/L2 都把内层 `trafficClass` 复制到外层，underlay 可以按业务
 DSCP 做分类。
-
-与真实设备的一处差异：真实 E 的 `vlan-type dot1q` 子接口会终结业务 VLAN，
-EVPN VPLS 封装里的内层帧不带该 VLAN，出隧道时再按 VSI 加回；仿真为了
-在 E 上直接把帧送回 S1，保留内层 VLAN 标签。
 
 #### VXLAN 过渡模式
 

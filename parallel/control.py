@@ -237,7 +237,8 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
 
             if cfg.l2_tunnel == 'srv6':
                 _add(commands[e], names, 'local_sid', 'srv6_l2_decap',
-                     ['%s/128' % local_route.sid], [e_ports[s1]])
+                     ['%s/128' % local_route.sid],
+                     [e_ports[s1], network.vlan])
                 for remote_site, mac_route in remote_mac_routes:
                     remote_route = evpn_routes.imet_route(
                         network.id, remote_site.abbr)
