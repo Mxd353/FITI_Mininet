@@ -78,5 +78,6 @@
     },
     "fiti_topology": "fiti.json",
     "hosts_per_site": 2,
-    "endpoints_per_host": 2
+    "endpoints_per_host": 2,
+    "endpoint_mtu": 1400
 }

@@ -45,12 +45,28 @@ class IfnameLengthTest(unittest.TestCase):
         cfg = load_config(self._config('bupt'))
         self.assertEqual(cfg.sites[0].abbr, 'bupt')
 
+    def test_endpoint_mtu_range(self):
+        raw = json.loads(open(_path('configs', 'parallel-min.json'),
+                              encoding='utf-8').read())
+        for bad in (0, 575, 1501):
+            raw['endpoint_mtu'] = bad
+            handle = tempfile.NamedTemporaryFile(
+                'w', suffix='.json', delete=False, encoding='utf-8')
+            try:
+                json.dump(raw, handle)
+            finally:
+                handle.close()
+            self.addCleanup(os.unlink, handle.name)
+            with self.assertRaises(ValueError):
+                load_config(handle.name)
+
     def test_real_configs_fit(self):
         for name in ('parallel.json', 'parallel-min.json'):
             cfg = load_config(_path('configs', name))
             for site in cfg.sites:
                 self.assertLessEqual(
                     len('cl_%s_1-eth0' % site.abbr), IFNAME_MAX, site.abbr)
+            self.assertEqual(cfg.endpoint_mtu, 1400)
 
 
 if __name__ == '__main__':

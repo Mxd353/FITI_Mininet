@@ -1,0 +1,79 @@
+meta:
+  name: traffic
+  description: 真实业务流量：TCP/HTTP 跨站点传输与端点 MTU 边界
+
+# 云主机就是 netns，里面是真实 Linux 协议栈，iperf/curl/python http.server
+# 直接在端点地址上跑，不需要额外建模。判据只看“能否完成传输”，
+# 不看带宽数值（BMv2 是软件转发）。
+#
+# 端点 MTU 由 configs/*.json 的 endpoint_mtu 决定（当前 1400），
+# 为 SRv6 封装开销（L3 64B / L2 78B）留出余量。
+
+cases:
+  - name: tcp-l3vpn-bj-sh
+    tags: [core, l3, traffic]
+    requires_sites: [sh]
+    description: L3VPN 上真实 TCP 传输（iperf 2.x，IPv6）
+    steps:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'rm -f /tmp/iperf_s_l3.log /tmp/iperf_s_l3.pid; nohup timeout 30 iperf -s -V -B 240a:a806:1:1::10 -p 5201 >/tmp/iperf_s_l3.log 2>&1 & echo $! >/tmp/iperf_s_l3.pid; for i in $(seq 1 60); do ss -ltn 2>/dev/null | grep -q ":5201 " && break; sleep 0.2; done; ss -ltn | grep -q ":5201 " && echo IPERF_SERVER_UP'
+        expect_contains: IPERF_SERVER_UP
+      - type: exec
+        node: cl_sh_1
+        command: sh -c 'iperf -c 240a:a806:1:1::10 -V -B 240a:a806:1:2::10 -p 5201 -t 3 -f m >/tmp/iperf_c_l3.log 2>&1; tail -3 /tmp/iperf_c_l3.log; grep -Eqi "[1-9][0-9.]* [KMG]bytes" /tmp/iperf_c_l3.log && echo IPERF_OK'
+        expect_contains: IPERF_OK
+    teardown:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'kill "$(cat /tmp/iperf_s_l3.pid 2>/dev/null)" 2>/dev/null; true'
+
+  - name: http-l3vpn-bj-sh
+    tags: [core, l3, traffic]
+    requires_sites: [sh]
+    description: L3VPN 上取 1MB 文件，验证大包不会被 SRv6 开销黑洞（RES_OPTIONS 缩短 http.server 的反向解析）
+    steps:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'mkdir -p /tmp/httpd_l3 && head -c 1048576 /dev/zero > /tmp/httpd_l3/f.bin; cd /tmp/httpd_l3; rm -f /tmp/httpd_l3.pid; RES_OPTIONS="timeout:1 attempts:1" nohup timeout 30 python3 -m http.server 8081 -b 240a:a806:1:1::10 >/tmp/httpd_l3.log 2>&1 & echo $! >/tmp/httpd_l3.pid; for i in $(seq 1 60); do ss -ltn 2>/dev/null | grep -q ":8081 " && break; sleep 0.2; done; ss -ltn | grep -q ":8081 " && echo HTTP_SERVER_UP'
+        expect_contains: HTTP_SERVER_UP
+      - type: exec
+        node: cl_sh_1
+        command: sh -c 'rm -f /tmp/f_l3.bin; curl -6 -sf --retry 3 --retry-connrefused --max-time 20 -o /tmp/f_l3.bin "http://[240a:a806:1:1::10]:8081/f.bin" && [ "$(stat -c%s /tmp/f_l3.bin)" = "1048576" ] && echo HTTP_OK'
+        expect_contains: HTTP_OK
+    teardown:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'kill "$(cat /tmp/httpd_l3.pid 2>/dev/null)" 2>/dev/null; true'
+
+  - name: tcp-l2vpn-bj-sh
+    tags: [core, l2, traffic]
+    requires_sites: [sh]
+    description: L2VPN 广播域上真实 TCP 传输
+    steps:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'rm -f /tmp/iperf_s_l2.log /tmp/iperf_s_l2.pid; nohup timeout 30 iperf -s -V -B 240a:a806:3:1::100 -p 5202 >/tmp/iperf_s_l2.log 2>&1 & echo $! >/tmp/iperf_s_l2.pid; for i in $(seq 1 60); do ss -ltn 2>/dev/null | grep -q ":5202 " && break; sleep 0.2; done; ss -ltn | grep -q ":5202 " && echo IPERF_SERVER_UP'
+        expect_contains: IPERF_SERVER_UP
+      - type: exec
+        node: cl_sh_1
+        command: sh -c 'iperf -c 240a:a806:3:1::100 -V -B 240a:a806:3:1::104 -p 5202 -t 3 -f m >/tmp/iperf_c_l2.log 2>&1; tail -3 /tmp/iperf_c_l2.log; grep -Eqi "[1-9][0-9.]* [KMG]bytes" /tmp/iperf_c_l2.log && echo IPERF_OK'
+        expect_contains: IPERF_OK
+    teardown:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'kill "$(cat /tmp/iperf_s_l2.pid 2>/dev/null)" 2>/dev/null; true'
+
+  - name: mtu-endpoint-vs-srv6
+    tags: [core, l3, traffic]
+    requires_sites: [sh]
+    description: 端点 MTU 1400 装得下 SRv6 开销；超过端点 MTU 的报文在主机侧就被拒绝
+    steps:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'ping -6 -M do -s 1352 -c 1 -W 1 -I 240a:a806:1:1::10 240a:a806:1:2::10 >/tmp/mtu_ok.txt 2>&1; grep -q "1 received" /tmp/mtu_ok.txt && echo MTU_FITS'
+        expect_contains: MTU_FITS
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'ping -6 -M do -s 1400 -c 1 -W 1 -I 240a:a806:1:1::10 240a:a806:1:2::10 >/tmp/mtu_big.txt 2>&1; grep -q "0 received" /tmp/mtu_big.txt && echo MTU_TOO_BIG'
+        expect_contains: MTU_TOO_BIG

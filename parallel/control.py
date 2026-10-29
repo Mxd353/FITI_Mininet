@@ -358,6 +358,11 @@ def _configure_cloud_host(net, cfg, site, host_id):
                     'ip link set dev %s address %s'
                     % (ifname, cfg.cloud_mac(network, site, host_id,
                                              endpoint)), '设置端点 MAC')
+            # SRv6 封装要占 64B（L3）/78B（L2），端点 MTU 留出余量，
+            # 否则大包封装后超过 1500 被 BMv2 丢弃，且没有 ICMPv6 PTB。
+            _run_ip(cloud,
+                    'ip link set dev %s mtu %d'
+                    % (ifname, cfg.endpoint_mtu), '设置端点 MTU')
             _run_ip(cloud, 'ip link set dev %s up' % ifname, '启用端点')
 
 

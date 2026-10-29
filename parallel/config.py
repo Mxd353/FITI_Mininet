@@ -47,6 +47,9 @@ class ParallelConfig:
     underlay: Dict[str, str] = field(default_factory=dict)
     hosts_per_site: int = 1
     endpoints_per_host: int = 1
+    #: 端点 MTU。SRv6 封装要占 64B（L3）/78B（L2），端点上必须留出余量，
+    #: 否则大包封装后超过 1500，BMv2 侧直接丢弃且不回 ICMPv6 PTB。
+    endpoint_mtu: int = 1400
 
     def site(self, abbr: str) -> Site:
         for item in self.sites:
@@ -306,6 +309,9 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     if not 1 <= endpoints_per_host <= 255:
         raise ValueError('endpoints_per_host 必须在 1-255: %s'
                          % endpoints_per_host)
+    endpoint_mtu = int(raw.get('endpoint_mtu', 1400))
+    if not 576 <= endpoint_mtu <= 1500:
+        raise ValueError('endpoint_mtu 必须在 576-1500: %s' % endpoint_mtu)
     fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
     if not os.path.isabs(fiti_topology):
         fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)
@@ -333,6 +339,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         underlay=dict(raw.get('underlay', {}) or {}),
         hosts_per_site=hosts_per_site,
         endpoints_per_host=endpoints_per_host,
+        endpoint_mtu=endpoint_mtu,
     )
 
 
@@ -377,8 +384,8 @@ def dump_config(cfg: ParallelConfig) -> None:
     print('FITI 核心: %s（%d 条链路）'
           % (cfg.fiti_topology, len(cfg.fiti.links)))
     print('L2 隧道: %s' % cfg.l2_tunnel)
-    print('每站点主机: %d，每主机端点: %d'
-          % (cfg.hosts_per_site, cfg.endpoints_per_host))
+    print('每站点主机: %d，每主机端点: %d，端点 MTU: %d'
+          % (cfg.hosts_per_site, cfg.endpoints_per_host, cfg.endpoint_mtu))
     print('并行网络:')
     for network in cfg.networks:
         print('  ID=%d VLAN=%d VPN=%s'

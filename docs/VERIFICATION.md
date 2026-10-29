@@ -7,7 +7,7 @@
 ```bash
 make parallel-stop      # 清理旧实例
 make verify-dry         # 免 root，只校验用例与配置
-make verify-min         # 4 站点，35 条用例（故障用例需 --tag faults）
+make verify-min         # 4 站点，39 条用例（故障用例需 --tag faults）
 make verify-full        # 41 站点
 ```
 
@@ -56,6 +56,7 @@ IPv6 接口 down 之后地址和路由会被删除，up 也不会自动恢复，
 | `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 9 |
 | `05-dynamic.yaml` | EVPN agent 动态增删路由 | 2 |
 | `06-faults.yaml` | 链路 down/up（默认跳过） | 1 |
+| `07-traffic.yaml` | 真实 TCP/HTTP 传输、端点 MTU 边界 | 4 |
 
 `requires_sites` 会在缺少站点的配置里自动跳过，例如全量用例在 `parallel-min.json` 下会显示 `SKIP`。
 
@@ -122,9 +123,9 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 
 | 配置 | 规模 | 结果 | 说明 |
 | --- | --- | --- | --- |
-| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 35/35 通过 | 用例耗时约 54 秒 |
+| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 39/39 通过 | 用例耗时约 63 秒 |
 | `parallel-min.json --tag faults` | 同上 | 1/1 通过 | netem 注入 100% 丢包后恢复 |
-| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 35/35 通过 | 用例耗时约 60 秒，峰值内存约 4.2 GB |
+| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 39/39 通过 | 用例耗时约 68 秒，峰值内存约 4.2 GB |
 
 失败用例会自动 dump 相关节点的 `ip -6 route/rule/addr` 和 P4 表项，
 放在 `runs/<时间戳>/evidence/`。
@@ -141,6 +142,8 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | L2VPN 同广播域 | `l2vpn-*` | ping |
 | L2VPN VNI 隔离 | `iso-l2-net3-to-net4` | ping 100% loss |
 | L2VPN 隧道内层不带业务 VLAN | `l2-tunnel-no-inner-vlan` | `C_bj` 抓 SRv6 包，内层无 `vlan` |
+| 真实业务流量（TCP/HTTP） | `tcp-*`、`http-*` | iperf 传输量非零、curl 200 + 1MB |
+| 端点 MTU 覆盖 SRv6 开销 | `mtu-endpoint-vs-srv6` | 1352 字节通、1400 字节被拒 |
 | BUM 复制 | `bum-net3` | ff02::1 |
 | 公网接入 | `public-fix` | ping FIX |
 | SRv6 SID 安装 | `e-bj-local-sid-*` | `local_sid` |
@@ -150,6 +153,22 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | BGP EVPN 会话 | 无 | 未实现 |
 | 链路故障收敛 | `link-down-bj-tjn` | 只能验证 down/up，不做收敛 |
 
+## 业务流量用例
+
+`07-traffic.yaml` 在真实 netns 里跑业务流量，不做协议建模：
+
+- `iperf 2.x`（`-V` 走 IPv6，`-B` 绑端点地址），北京作服务端、上海作客户端，
+  L3VPN 与 L2VPN 各一条；
+- `python3 -m http.server` + `curl` 取 1MB 文件，验证大包不会被隧道开销黑洞；
+- 判据只看“传输是否完成”：iperf 输出必须有非零字节数，curl 必须 200 且文件长度正确；
+  **不断言带宽**，BMv2 是软件转发，数字没有参考意义；
+- 端点 MTU 由 `configs/*.json` 的 `endpoint_mtu` 控制（默认 1400），
+  为 SRv6 的 64B（L3）/78B（L2）开销留余量；超过端点 MTU 的报文在主机侧
+  就被拒绝，不需要依赖 ICMPv6 PTB（BMv2 不生成该报文）；
+- `http.server` 启动时的反向解析会卡 6 秒，用例里用
+  `RES_OPTIONS="timeout:1 attempts:1"` 压到 1 秒，并按端口就绪（`ss -ltn`）轮询，
+  不依赖固定 sleep。
+
 ## 能验证与不能验证
 
 | 能验证 | 不能验证 |
@@ -158,6 +177,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | VRF/VSI 隔离 | 真实 BGP 邻居与 NLRI |
 | SRv6 封装/解封装语义 | SRv6 压缩 SID、TE |
 | 宿主机多端点（macvlan）接入 | 宿主机 OVS/VXLAN 段、大规模 VTEP |
+| 业务可达与 TCP/HTTP 传输 | 吞吐、时延、抖动（BMv2 软件转发） |
 | 表项内容与容量 | 控制面收敛时间 |
 | 动态路由增删 | 多控制器主备 |
 | 链路 up/down | 路由自动收敛（当前是静态路由） |

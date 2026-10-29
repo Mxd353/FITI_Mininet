@@ -147,6 +147,7 @@ def render_summary(cfg):
         'config': os.path.abspath(cfg.path),
         'hosts_per_site': cfg.hosts_per_site,
         'endpoints_per_host': cfg.endpoints_per_host,
+        'endpoint_mtu': cfg.endpoint_mtu,
         'sites': [{'id': site.id, 'abbr': site.abbr, 'name': site.name}
                   for site in sorted(cfg.sites, key=lambda item: item.id)],
         'networks': [],

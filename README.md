@@ -297,40 +297,56 @@ IMET/BUM multicast group 仍由静态控制面安装。
 
 ### L3VPN（4 站点最小验证）
 
+按源地址绑定（`-I <源地址>`），不要用 `v3501` 这类网卡名：
+VLAN 子接口上没有地址，按网卡绑会直接 bind 失败。
+
 ```text
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:2::10
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:2::11
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:14::10
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:23::10
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:1::11
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:2::10
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:2::11
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:14::10
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:23::10
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:1::11
 ```
 
 ### L3VPN（41 站点全量）
 
 ```text
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:3::10
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:5::10
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:41::10
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:3::10
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:5::10
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:41::10
 ```
 
 ### L2VPN
 
 ```text
-cl_bj_1 ping6 -c 3 -I v3503 240a:a806:3:1::11
-cl_bj_1 ping6 -c 3 -I v3503 240a:a806:3:1::111
-cl_bj_1 ping6 -c 3 -I v3503 240a:a806:3:1::110
+cl_bj_1 ping6 -c 3 -I 240a:a806:3:1::100 240a:a806:3:1::101
+cl_bj_1 ping6 -c 3 -I 240a:a806:3:1::100 240a:a806:3:1::102
+cl_bj_1 ping6 -c 3 -I 240a:a806:3:1::100 240a:a806:3:1::104
 ```
 
 ### BUM
 
+链路本地组播必须绑网卡，不能绑源地址：
+
 ```text
-cl_bj_1 ping6 -c 3 -I v3503 ff02::1
+cl_bj_1 ping6 -c 3 -I ep_bj_1_1_3 ff02::1
 ```
 
 ### 公网
 
 ```text
-cl_bj_1 ping6 -c 3 -I v3501 2001:255:0:100::2000
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 2001:255:0:100::2000
+```
+
+### 业务流量（TCP / HTTP）
+
+```text
+# 北京起服务端，上海作为客户端
+cl_bj_1 iperf -s -V -B 240a:a806:1:1::10 -p 5201
+cl_sh_1 iperf -c 240a:a806:1:1::10 -V -B 240a:a806:1:2::10 -p 5201 -t 3
+
+cl_bj_1 sh -c 'cd /tmp/httpd && python3 -m http.server 8081 -b 240a:a806:1:1::10'
+cl_sh_1 curl -6 -o /dev/null http://[240a:a806:1:1::10]:8081/f.bin
 ```
 
 ### 跨网络隔离（负向测试）
@@ -339,10 +355,10 @@ cl_bj_1 ping6 -c 3 -I v3501 2001:255:0:100::2000
 
 ```text
 # 网络 2 内部：应成功
-cl_bj_1 ping6 -c 3 -I v3502 240a:a806:2:2::10
+cl_bj_1 ping6 -c 3 -I 240a:a806:2:1::10 240a:a806:2:2::10
 
 # 从网络 1 访问网络 2：应 100% 丢包
-cl_bj_1 ping6 -c 3 -I v3501 240a:a806:2:2::10
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:2:2::10
 ```
 
 隔离由两处共同保证：
@@ -381,7 +397,7 @@ make parallel-stop            # 清理
 ```bash
 make parallel-stop
 make verify-dry
-make verify-min      # 4 站点，35 条用例
+make verify-min      # 4 站点，39 条用例
 make verify-full     # 41 站点
 ```
 
@@ -492,7 +508,8 @@ parallel_evpn_ctl.py        agent 客户端
 - 宿主机 OVS/VXLAN 段尚未建模，同站点端点之间是 VLAN 二层转发；
 - 每台主机有 8 个 macvlan 端点、16 张策略路由表，端点增多时表项和规则数量线性增长；
 - L2 远端主机之间依赖 ND 解析，不再逐主机下发静态邻居；
-- VXLAN/SRv6 封装有额外开销，大包需要调整 MTU；
+- SRv6 封装有额外开销（L3 64B、L2 78B），端点 MTU 默认 1400（`endpoint_mtu`），
+  超过端点 MTU 的报文在主机侧就被拒绝，不会被隧道黑洞；
 
 ## 故障排查
 
