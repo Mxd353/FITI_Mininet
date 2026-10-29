@@ -20,10 +20,7 @@
 
 ```text
 feature/parallel-network    41 站点、41 台 BMv2 + 82 台 OVS 当前实现
-feature/parallel-41-switch  41 台站点交换机的未来优化分支
 ```
-
-`feature/parallel-41-switch` 目前只是占位分支，尚未实现。
 
 ## 快速开始
 
@@ -39,8 +36,7 @@ sudo modprobe 8021q
 - Mininet 2.3+；
 - Open vSwitch（`ovs-vsctl`、`ovs-vswitchd`）；
 - p4c（`p4c-bm2-ss`）；
-- bmv2（`simple_switch`、`simple_switch_CLI`）；
-- root 权限。
+- bmv2（`simple_switch`、`simple_switch_CLI`）。
 
 ### 4 站点最小验证
 
@@ -66,7 +62,7 @@ make parallel-run-min
 北京 — 天津 — 济南 — 上海
 ```
 
-对应免 root 命令：
+对应命令：
 
 ```bash
 make parallel-dump-min
@@ -89,13 +85,7 @@ make parallel-run
 125 个 Linux netns
 ```
 
-全量启动较慢。Thrift 端口段被占用时会自动向后寻找空闲端口段，例如：
-
-```text
-*** Thrift 端口段被占用，自动改用 11501～11541
-```
-
-也可以显式指定起始端口：
+Thrift 端口段被占用时会自动向后寻找空闲端口段，也可以显式指定起始端口：
 
 ```bash
 sudo python3 parallel_net.py --thrift-base 15000
@@ -106,29 +96,6 @@ sudo python3 parallel_net.py --thrift-base 15000
 ```bash
 make parallel-stop
 ```
-
-会显示每一步的进度（等待 CLI 退出、停止 simple_switch、清理 Mininet、
-删除残留接口）：
-
-```text
-==> 停止并行网络
-  parallel_net.py ... 发送 SIGINT（PID 12345）
-  parallel_net.py 退出 ... 完成 (1.8s)
-  simple_switch ... 发送 SIGTERM（PID 12346,12347,...）
-  simple_switch 退出 ... 完成 (0.6s)
-  清理 Mininet 网络 ... 完成 (2.1s)
-  清理残留接口 ... 24 个
-  删除 agent socket ... 完成
-*** 清理完成，终端已恢复
-```
-
-它会清理：
-
-- `simple_switch`；
-- `parallel_net.py`；
-- Mininet 网络与 OVS bridge；
-- 残留的 `*-ethN` 接口；
-- `/tmp/parallel_evpn.sock`。
 
 注意：`parallel-stop` 里的 `mn -c` 会删除本机**所有** OVS bridge。
 如果这台机器上还跑着别的 OVS 实验，请先确认再执行。
@@ -145,8 +112,9 @@ make parallel-run-min
 每个站点：
 
 ```text
-C — E — S1 — cloud
-C — A — S2 — cloud
+ / E -- S1 \ 
+C         cloud
+ \ A -- S2 / 
 ```
 
 - `E`：BMv2/P4，负责 VRF、L3VPN、L2VPN、SRv6 和 BUM 复制；
@@ -170,7 +138,7 @@ configs/fiti.json
 
 ## 单云主机和多 VLAN 子接口
 
-每站点只有一台云服务器，通过 VLAN 子接口区分切片：
+每站点一台云服务器，通过 VLAN 子接口区分切片：
 
 ```text
 cl_bj
@@ -188,19 +156,6 @@ cl_bj
 - 云服务器 MAC 按 `(站点, 网络)` 确定性生成。
 
 ## 接入交换机（OVS）
-
-`S1`/`S2` 在 PDF 中就是普通站点交换机，因此不再跑 BMv2/P4，而是 Mininet
-OVS bridge：
-
-```text
-S1: E 口      trunks=1-4094
-    cloud 口  trunks=1-4094
-
-S2: cloud 口  trunks=1-4094
-    A 口      trunks=1-3500,3901-4094
-```
-
-含义：
 
 - `S1` 上行放行并行 VLAN 3501-3900；
 - `S2` 上行拒绝并行 VLAN 3501-3900，其余 VLAN 正常；
@@ -245,7 +200,7 @@ sudo ovs-appctl fdb/show S1_bj
 bj、sh、tjn、jnn
 ```
 
-选择的是 FITI 实际拓扑中连通的北京—天津—济南—上海路径。
+在 FITI 实际拓扑中连通的北京—天津—济南—上海路径。
 
 ## EVPN 路由模型
 
@@ -256,7 +211,7 @@ bj、sh、tjn、jnn
 - EVPN Inclusive Multicast 路由；
 - RD/RT、VNI、SRv6 SID。
 
-免 root 输出：
+输出：
 
 ```bash
 make parallel-evpn-dump
@@ -356,7 +311,7 @@ cl_bj ping6 -c 3 -I v3501 2001:255:0:100::2000
 
 ### 跨网络隔离（负向测试）
 
-这是**故意**应该失败的测试，用最小验证拓扑里的上海站点：
+用最小验证拓扑里的上海站点：
 
 ```text
 # 网络 2 内部：应成功
@@ -401,7 +356,7 @@ make parallel-stop            # 清理
 
 ```bash
 make parallel-stop
-make verify-dry      # 免 root
+make verify-dry
 make verify-min      # 4 站点，26 条用例
 make verify-full     # 41 站点
 ```
@@ -485,7 +440,6 @@ parallel_evpn_ctl.py        agent 客户端
 - 动态 agent 只支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；
 - 接入交换机是 OVS，L2 转发靠 MAC 学习，不是 EVPN 下发的静态 FIB；
 - 41 台 BMv2 仍然占用较多资源，全量启动较慢；
-- `feature/parallel-41-switch` 尚未实现。
 
 ## 故障排查
 
@@ -525,35 +479,6 @@ Error creating interface pair (A_bj-eth1,S2_bj-eth1): RTNETLINK answers: File ex
 sudo python3 -m parallel.cleanup --dry-run   # 只列出残留接口
 sudo python3 -m parallel.cleanup             # 删除
 ```
-
-### `parallel-stop` 后终端不回显
-
-原因：Mininet CLI 使用 readline，进程被 `SIGKILL` 时没机会恢复 termios，
-终端的行规程停在 raw 模式，所以输入不回显。
-
-`make parallel-stop` 现在会：
-
-```text
-先发 SIGINT，让 CLI 走 finally 并恢复终端
-再升级到 SIGTERM，最后才 SIGKILL
-结束时执行 stty sane 并关闭鼠标/括号粘贴模式
-```
-
-如果终端仍然异常，在**出问题的那个终端**执行：
-
-```bash
-make fix-tty
-```
-
-或：
-
-```bash
-stty sane
-reset
-```
-
-注意：从另一个终端执行 `make parallel-stop` 时，里面的 `stty sane` 只作用于
-执行 make 的那个终端；出问题的终端靠 SIGINT 恢复，必要时再手动 `make fix-tty`。
 
 ### `Network is unreachable`
 

@@ -23,24 +23,6 @@ runs/<时间戳>/evidence/<用例>.txt
 是否 dirty、p4c/bmv2/OVS 版本和 Python 版本，便于事后追溯这份结果对应
 哪个代码和配置。JUnit 报告里以 `<properties>` 形式提供同样的信息。
 
-运行时会逐条打印进度，跑完给汇总：
-
-```text
-==> 功能验收：26 条用例，配置 configs/parallel-min.json，标签 全部
-[ 1/26] l3vpn-net1-bj-sh         PASS    2.1s
-[ 2/26] l3vpn-net1-bj-tjn        PASS    2.0s
-[ 3/26] l3vpn-net1-bj-jnn        PASS    2.0s
-[ 4/26] iso-l2-net3-to-net4      FAIL    4.0s
-        期望 100% 丢包，实际 0%（收到 3）
-[ 5/26] vlan-policy-bj           SKIP    0.0s  缺少站点: gz
-
-通过 24，失败 1，跳过 1，共 26（用例耗时 52.3s）
-最慢用例 4.0s
-报告: runs/20261029-160000
-```
-
-执行中终端会显示 spinner 和 ETA；非 TTY 环境（CI、重定向）自动关闭动画。
-
 控制输出：
 
 ```bash
