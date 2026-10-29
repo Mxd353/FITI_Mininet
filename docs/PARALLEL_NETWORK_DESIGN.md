@@ -310,20 +310,60 @@ SRv6 SID 使用 `fd00:0:{站点 ID}:1::1:{网络 ID}`（L3）和
 
 ## 5. P4 数据平面设计
 
-### 5.1 解析顺序
+### 5.1 封装格式
+
+解析顺序（E 的 ingress）：
 
 ```text
-Ethernet
-  -> 802.1Q VLAN
-  -> IPv6
-  -> SRH（可选）
-  -> inner IPv6（SRv6 解封装后）
+Ethernet -> 802.1Q VLAN（可选）-> IPv6 -> SRH（可选）
+         -> inner IPv6（L3VPN）或 inner Ethernet -> VLAN -> IPv6（L2VPN）
 ```
 
-如果首期使用 VXLAN 作为 L2VPN 过渡：
+#### L3VPN（EVPN SRv6，等价 H.Encaps + End.DT6）
+
+以网络 1、北京 → 上海为例，E 之间实际发出的报文（tcpdump 实测）：
 
 ```text
-Ethernet -> VLAN -> IPv6 -> UDP -> VXLAN -> inner Ethernet -> inner VLAN -> inner IPv6
+Ethernet   外层 untagged；dst = 到下一跳的 MAC，src = 本端核心口 MAC
+IPv6       src = 本端 L3 SID fd00:0:1:1::1:1
+           dst = 远端 L3 SID fd00:0:2:1::1:1
+           nextHdr = 43，hopLimit = 64，payloadLen = 内层 payloadLen + 64
+  SRH      nextHdr = 41，hdrExtLen = 2，routingType = 4，
+           segmentsLeft = 0，lastEntry = 0，flags = 0，tag = 0
+    segment[0] = 远端 SID
+    IPv6   内层业务报文，字段原样保留（TTL 已由入口 E 递减一次）
+```
+
+#### L2VPN（EVPN SRv6，等价 H.Encaps + End.DT2）
+
+```text
+Ethernet   外层 untagged
+IPv6       src/dst = 本端/远端 L2 SID fd00:0:{站点}:1::2:{网络}
+           nextHdr = 43，hopLimit = 64
+           payloadLen = 内层 payloadLen + 78（内层带 VLAN 时 +82）
+  SRH      nextHdr = 143（Ethernet），其余字段同 L3VPN
+    Ethernet   内层，原 dst/src MAC
+      VLAN     内层业务 VLAN（vid = 3500 + 网络 ID）
+        IPv6   内层业务报文，TTL 不变
+```
+
+BUM 帧走同一格式，只是外层 dst 由 `l2_rep_sid` 按 egress_rid 逐站点选择，
+并且 SRH 的 `segmentsLeft = 0`（不逐跳处理 SRH，只按 DA 命中 `local_sid`）。
+
+外层 DSCP：L3/L2 都把内层 `trafficClass` 复制到外层，underlay 可以按业务
+DSCP 做分类。
+
+与真实设备的一处差异：真实 E 的 `vlan-type dot1q` 子接口会终结业务 VLAN，
+EVPN VPLS 封装里的内层帧不带该 VLAN，出隧道时再按 VSI 加回；仿真为了
+在 E 上直接把帧送回 S1，保留内层 VLAN 标签。
+
+#### VXLAN 过渡模式
+
+仅在 `l2_tunnel = "vxlan"` 时使用：
+
+```text
+Ethernet -> VLAN -> IPv6 -> UDP(4789) -> VXLAN(VNI = 网络 ID)
+         -> inner Ethernet -> inner VLAN -> inner IPv6
 ```
 
 ### 5.2 表设计

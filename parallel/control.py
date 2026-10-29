@@ -335,12 +335,17 @@ def _configure_cloud_host(net, cfg, site, host_id):
     """Create the VLAN uplink and one macvlan endpoint per (host, slice)."""
     cloud = net.get(cloud_name(site, host_id))
     parent = _host_intf(cloud, s1_name(site))
+    # VLAN 子接口只做承载，IPv6 关掉：否则内核会在子接口上发 RS/MLD，
+    # 这些组播帧会进入业务的 VRF/广播域，被当成 BUM 复制到其它站点。
+    # macvlan 子接口不会继承 disable_ipv6，端点自己仍然启用 IPv6。
+    cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % parent.name)
     for network in cfg.networks_for_site(site):
         uplink = cfg.vlan_ifname(network)
         cloud.cmd('ip link del %s 2>/dev/null || true' % uplink)
         _run_ip(cloud,
                 'ip link add link %s name %s type vlan id %d'
                 % (parent.name, uplink, network.vlan), '创建 VLAN 子接口')
+        cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % uplink)
         _run_ip(cloud, 'ip link set dev %s up' % uplink, '启用 VLAN 子接口')
         for endpoint in cfg.endpoint_ids():
             ifname = cfg.endpoint_ifname(site, host_id, endpoint, network)
