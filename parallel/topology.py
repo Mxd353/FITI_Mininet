@@ -30,9 +30,9 @@ def s2_name(site) -> str:
     return 'S2_%s' % site.abbr
 
 
-def cloud_name(site, network=None) -> str:
-    """One cloud host per site; all slices use VLAN subinterfaces on it."""
-    return 'cl_%s' % site.abbr
+def cloud_name(site, host=1) -> str:
+    """Cloud host ``host`` of a site; slices use VLAN subinterfaces on it."""
+    return 'cl_%s_%d' % (site.abbr, int(host))
 
 
 def switch_id(site, role='E') -> int:
@@ -143,10 +143,11 @@ class ParallelTopology(Topo):
         self.addLink(c_name(bj), PUBLIC_BORDER)
         self.addLink(PUBLIC_BORDER, PUBLIC_FIX)
 
-        # One cloud host per site.  It uses 802.1Q VLAN subinterfaces on
-        # the S1/S2 trunk to distinguish all parallel-network slices.
+        # Several cloud hosts per site.  Each uses 802.1Q VLAN
+        # subinterfaces on the S1/S2 trunk to distinguish slices.
         for site in cfg.sites:
-            host = cloud_name(site)
-            self.addHost(host)
-            self.addLink(host, s1_name(site))
-            self.addLink(host, s2_name(site))
+            for host_id in cfg.host_ids():
+                host = cloud_name(site, host_id)
+                self.addHost(host)
+                self.addLink(host, s1_name(site))
+                self.addLink(host, s2_name(site))

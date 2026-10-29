@@ -41,6 +41,15 @@ cases:
         keys: [1, "240a:a806:1:2::/64"]
         present: true
 
+  - name: e-bj-host-route
+    tags: [core, control, l3]
+    steps:
+      - type: p4_entry
+        switch: E_bj
+        table: l3_fib
+        keys: [1, "240a:a806:1:1::11/128"]
+        present: true
+
   - name: e-bj-l2-tunnel-to-sh
     tags: [core, control, l2]
     requires_sites: [sh]
@@ -64,7 +73,7 @@ cases:
     tags: [core, control]
     steps:
       - type: exec
-        node: cl_bj
+        node: cl_bj_1
         command: ip -6 rule show
         expect_contains: "20001"
 
@@ -72,11 +81,11 @@ cases:
     tags: [core, control, l2]
     steps:
       - type: exec
-        node: cl_bj
+        node: cl_bj_1
         command: ip -6 route show table 30003
         expect_contains: default
       - type: exec
-        node: cl_bj
+        node: cl_bj_1
         command: ip -6 route show table 30004
         expect_contains: default
 
@@ -84,6 +93,6 @@ cases:
     tags: [core, control]
     steps:
       - type: exec
-        node: cl_bj
+        node: cl_bj_1
         command: ip -6 route show table 20001
         expect_contains: "default"

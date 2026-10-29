@@ -158,7 +158,7 @@ class ParallelEvpnAgent:
                                  [route.prefix], [network.id]))
             if site.abbr == target.abbr:
                 s1 = self.switch_ports[e][s1_name(site)]
-                cloud_mac = self.macs[site.abbr]['clouds'][network.id]
+                cloud_mac = self.cfg.cloud_mac(network, site, 1)
                 ops.append(self._cmd(
                     e, 'l3_fib', 'forward_l3',
                     [network.id, route.prefix],
@@ -218,7 +218,8 @@ class ParallelEvpnAgent:
         for site in self.cfg.network_sites(network):
             e = e_name(site)
             e_ports = self.switch_ports[e]
-            cloud = self.net.get(cloud_name(site, network))
+            cloud_hosts = [self.net.get(cloud_name(site, host_id))
+                           for host_id in self.cfg.host_ids()]
 
             if site.abbr == target.abbr:
                 # S1/S2 are OVS bridges and learn the local MAC themselves.
@@ -231,8 +232,9 @@ class ParallelEvpnAgent:
             if delete:
                 ops.append(self._del(e, 'l2_tunnel',
                                      [network.vlan, route.mac]))
-                cloud.cmd('ip -6 neigh del %s dev %s'
-                          % (route.ip, self.cfg.vlan_ifname(network)))
+                for cloud in cloud_hosts:
+                    cloud.cmd('ip -6 neigh del %s dev %s'
+                              % (route.ip, self.cfg.vlan_ifname(network)))
             else:
                 c = c_name(site)
                 ops.append(self._cmd(
@@ -241,9 +243,11 @@ class ParallelEvpnAgent:
                     [local_route.sid, route.sid,
                      self.macs[site.abbr]['e_c'],
                      _host_mac(self.net.get(c), e), e_ports[c]]))
-                cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                          % (route.ip, route.mac,
-                             self.cfg.vlan_ifname(network)))
+                for cloud in cloud_hosts:
+                    cloud.cmd(
+                        'ip -6 neigh replace %s lladdr %s dev %s nud permanent'
+                        % (route.ip, route.mac,
+                           self.cfg.vlan_ifname(network)))
         return ops
 
     def _apply_l2(self, route, delete=False):

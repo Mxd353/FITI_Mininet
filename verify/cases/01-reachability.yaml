@@ -8,7 +8,7 @@ cases:
     requires_sites: [sh]
     steps:
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3501
         target: 240a:a806:1:2::10
         expect: pass
@@ -18,7 +18,7 @@ cases:
     requires_sites: [tjn]
     steps:
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3501
         target: 240a:a806:1:14::10
         expect: pass
@@ -28,9 +28,57 @@ cases:
     requires_sites: [jnn]
     steps:
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3501
         target: 240a:a806:1:23::10
+        expect: pass
+
+  - name: l3vpn-net1-bj-host2
+    tags: [core, l3, multihost]
+    steps:
+      - type: ping
+        node: cl_bj_1
+        iface: v3501
+        target: 240a:a806:1:1::11
+        expect: pass
+
+  - name: l3vpn-net1-bj-to-sh-host2
+    tags: [core, l3, multihost]
+    requires_sites: [sh]
+    steps:
+      - type: ping
+        node: cl_bj_1
+        iface: v3501
+        target: 240a:a806:1:2::11
+        expect: pass
+
+  - name: l3vpn-net1-bj2-sh2
+    tags: [core, l3, multihost]
+    requires_sites: [sh]
+    steps:
+      - type: ping
+        node: cl_bj_2
+        iface: v3501
+        target: 240a:a806:1:2::11
+        expect: pass
+
+  - name: l2vpn-net3-bj-host2
+    tags: [core, l2, multihost]
+    steps:
+      - type: ping
+        node: cl_bj_1
+        iface: v3503
+        target: 240a:a806:3:1::110
+        expect: pass
+
+  - name: l2vpn-net3-bj-to-sh-host2
+    tags: [core, l2, multihost]
+    requires_sites: [sh]
+    steps:
+      - type: ping
+        node: cl_bj_1
+        iface: v3503
+        target: 240a:a806:3:1::111
         expect: pass
 
   - name: l3vpn-net2-bj-sh
@@ -38,7 +86,7 @@ cases:
     requires_sites: [sh]
     steps:
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3502
         target: 240a:a806:2:2::10
         expect: pass
@@ -48,7 +96,7 @@ cases:
     requires_sites: [sh]
     steps:
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3503
         target: 240a:a806:3:1::11
         expect: pass
@@ -58,7 +106,7 @@ cases:
     requires_sites: [tjn]
     steps:
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3503
         target: 240a:a806:3:1::1d
         expect: pass
@@ -68,7 +116,7 @@ cases:
     requires_sites: [sh]
     steps:
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3503
         target: ff02::1
         count: 3
@@ -80,7 +128,7 @@ cases:
     tags: [core, public]
     steps:
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3501
         target: 2001:255:0:100::2000
         expect: pass

@@ -84,9 +84,11 @@ def _build_net(cfg):
         s1 = net.add(_Ovs(s1_name(site)))
         s2 = net.add(_Ovs(s2_name(site)))
         s1.connect(e_name(site))
-        s1.connect(cloud_name(site))
-        s2.connect(cloud_name(site))
         s2.connect(a_name(site))
+        for host_id in cfg.host_ids():
+            cloud = cloud_name(site, host_id)
+            s1.connect(cloud)
+            s2.connect(cloud)
     return net
 
 
@@ -126,13 +128,16 @@ class OvsConfigTest(unittest.TestCase):
             s1 = self.net.get(s1_name(site))
             s2 = self.net.get(s2_name(site))
 
+            expected_s1 = [ALL_VLANS] * (1 + len(list(self.cfg.host_ids())))
             self.assertEqual(sorted(s1.trunks.values()),
-                             sorted([ALL_VLANS, ALL_VLANS]))
+                             sorted(expected_s1))
 
             uplink = s2.intf_to(a_name(site))
             self.assertEqual(s2.trunks[uplink.name], NON_PARALLEL_VLANS)
-            self.assertEqual(s2.trunks[s2.intf_to(cloud_name(site)).name],
-                             ALL_VLANS)
+            for host_id in self.cfg.host_ids():
+                self.assertEqual(
+                    s2.trunks[s2.intf_to(cloud_name(site, host_id)).name],
+                    ALL_VLANS)
 
             vlans = trunk_vlans(s2, uplink)
             self.assertNotIn(PARALLEL_VLAN_MIN, vlans)

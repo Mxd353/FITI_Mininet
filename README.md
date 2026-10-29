@@ -5,7 +5,7 @@
 当前范围：
 
 - 41 个站点；
-- 每站点 `C/E/A/S1/S2` 和一台云服务器；
+- 每站点 `C/E/A/S1/S2` 和两台云服务器；
 - 4 个并行网络（2 个 L3VPN + 2 个 L2VPN）；
 - 站点 PE（`E`）使用 BMv2/P4；
 - 接入交换机（`S1`/`S2`）使用 OVS 二层交换；
@@ -53,7 +53,7 @@ make parallel-run-min
 4 个站点：北京、上海、天津、济南
 4 台 BMv2（每站点 E）
 8 台 OVS（每站点 S1/S2）
-14 个 Linux netns
+18 个 Linux netns
 ```
 
 这 4 个站点在 FITI 实际拓扑中组成连通路径：
@@ -82,7 +82,7 @@ make parallel-run
 41 个站点
 41 台 BMv2（每站点 E）
 82 台 OVS（每站点 S1/S2）
-125 个 Linux netns
+166 个 Linux netns
 ```
 
 Thrift 端口段被占用时会自动向后寻找空闲端口段，也可以显式指定起始端口：
@@ -113,7 +113,7 @@ make parallel-run-min
 
 ```text
  / E -- S1 \ 
-C         cloud
+C         cloud × 2
  \ A -- S2 / 
 ```
 
@@ -121,7 +121,7 @@ C         cloud
 - `S1`：OVS，上行放行并行 VLAN；
 - `S2`：OVS，上行拒绝并行 VLAN；
 - `C`、`A`：Linux netns；
-- `cloud`：每站点一台 Linux 主机；
+- `cloud`：每站点两台 Linux 主机（`cl_<站点>_1`、`cl_<站点>_2`）；
 - `pub_border`、`fix`：北京公网边界。
 
 站点之间的核心链路直接使用 FITI 实际拓扑：
@@ -136,24 +136,28 @@ configs/fiti.json
 
 例如北京到上海在最小验证拓扑中经过天津和济南。
 
-## 单云主机和多 VLAN 子接口
+## 多台云主机和多 VLAN 子接口
 
-每站点一台云服务器，通过 VLAN 子接口区分切片：
+每站点两台云服务器，每台都通过 VLAN 子接口区分切片：
 
 ```text
-cl_bj
-├── eth0   -> S1 trunk
-├── eth1   -> S2 trunk
-├── v3501  -> 网络 1
-├── v3502  -> 网络 2
-├── v3503  -> 网络 3
-└── v3504  -> 网络 4
+cl_bj_1                    cl_bj_2
+├── eth0   -> S1 trunk     ├── eth0   -> S1 trunk
+├── eth1   -> S2 trunk     ├── eth1   -> S2 trunk
+├── v3501  -> 网络 1        ├── v3501  -> 网络 1
+├── v3502  -> 网络 2        ├── v3502  -> 网络 2
+├── v3503  -> 网络 3        ├── v3503  -> 网络 3
+└── v3504  -> 网络 4        └── v3504  -> 网络 4
 ```
+
+同站点两台主机共享站点业务 /64，地址分别是 `::10` 和 `::11`；
+L2 扁平 /64 下，第二台主机使用高位偏移（如 `::110`、`::111`），
+避免和第一台主机的地址冲突。
 
 - S1/S2 到云服务器使用 trunk；
 - L3 网络使用按源地址和目的前缀分流的策略路由；
 - L2 网络使用 VLAN 子接口和静态远端邻居；
-- 云服务器 MAC 按 `(站点, 网络)` 确定性生成。
+- 云服务器 MAC 按 `(站点, 主机, 网络)` 确定性生成。
 
 ## 接入交换机（OVS）
 
@@ -225,7 +229,7 @@ make parallel-evpn-dump
 共 164 条本地路由
 ```
 
-Mininet 启动后增加 82 条云服务器 MAC/IP 路由，共 246 条。
+Mininet 启动后每台主机一条 MAC/IP 路由，41 站点 × 2 主机 × 2 个 L2 网络，共 328 条。
 
 ## 动态路由 agent
 
@@ -276,37 +280,39 @@ IMET/BUM multicast group 仍由静态控制面安装。
 ### L3VPN（4 站点最小验证）
 
 ```text
-cl_bj ping6 -c 3 -I v3501 240a:a806:1:2::10
-cl_bj ping6 -c 3 -I v3501 240a:a806:1:14::10
-cl_bj ping6 -c 3 -I v3501 240a:a806:1:23::10
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:2::10
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:2::11
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:14::10
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:23::10
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:1::11
 ```
 
 ### L3VPN（41 站点全量）
 
 ```text
-cl_bj ping6 -c 3 -I v3501 240a:a806:1:3::10
-cl_bj ping6 -c 3 -I v3501 240a:a806:1:5::10
-cl_bj ping6 -c 3 -I v3501 240a:a806:1:41::10
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:3::10
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:5::10
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:1:41::10
 ```
 
 ### L2VPN
 
 ```text
-cl_bj ping6 -c 3 -I v3503 240a:a806:3:1::11
-cl_bj ping6 -c 3 -I v3503 240a:a806:3:1::12
-cl_bj ping6 -c 3 -I v3503 240a:a806:3:1::14
+cl_bj_1 ping6 -c 3 -I v3503 240a:a806:3:1::11
+cl_bj_1 ping6 -c 3 -I v3503 240a:a806:3:1::111
+cl_bj_1 ping6 -c 3 -I v3503 240a:a806:3:1::110
 ```
 
 ### BUM
 
 ```text
-cl_bj ping6 -c 3 -I v3503 ff02::1
+cl_bj_1 ping6 -c 3 -I v3503 ff02::1
 ```
 
 ### 公网
 
 ```text
-cl_bj ping6 -c 3 -I v3501 2001:255:0:100::2000
+cl_bj_1 ping6 -c 3 -I v3501 2001:255:0:100::2000
 ```
 
 ### 跨网络隔离（负向测试）
@@ -315,10 +321,10 @@ cl_bj ping6 -c 3 -I v3501 2001:255:0:100::2000
 
 ```text
 # 网络 2 内部：应成功
-cl_bj ping6 -c 3 -I v3502 240a:a806:2:2::10
+cl_bj_1 ping6 -c 3 -I v3502 240a:a806:2:2::10
 
 # 从网络 1 访问网络 2：应 100% 丢包
-cl_bj ping6 -c 3 -I v3501 240a:a806:2:2::10
+cl_bj_1 ping6 -c 3 -I v3501 240a:a806:2:2::10
 ```
 
 隔离由两处共同保证：
@@ -483,10 +489,10 @@ sudo python3 -m parallel.cleanup             # 删除
 ### `Network is unreachable`
 
 ```text
-cl_bj ip -6 addr show v3501
-cl_bj ip -6 rule show
-cl_bj ip -6 route show table 20001
-cl_bj ip -6 route get 240a:a806:1:2::10
+cl_bj_1 ip -6 addr show v3501
+cl_bj_1 ip -6 rule show
+cl_bj_1 ip -6 route show table 20001
+cl_bj_1 ip -6 route get 240a:a806:1:2::10
 ```
 
 ### agent 连接失败

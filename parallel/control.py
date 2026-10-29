@@ -164,7 +164,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                      [network.id, route.prefix],
                      [e_ports[s1],
                       macs[site.abbr]['e_s1'],
-                      macs[site.abbr]['clouds'][network.id],
+                      cfg.cloud_mac(network, site, 1),
                       network.vlan])
             else:
                 local_route = evpn_routes.l3_route(network.id, site.abbr)
@@ -176,6 +176,17 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                      [local_route.sid, route.sid,
                       macs[site.abbr]['e_c'], c_dmac, c_port])
 
+        # Per-host /128 routes: decapsulated and public traffic is delivered
+        # to the owning cloud host through a second l3_fib lookup.
+        for network in cfg.l3_networks_for_site(site):
+            for host_id in cfg.host_ids():
+                _add(commands[e], names, 'l3_fib', 'forward_l3',
+                     [network.id,
+                      '%s/128' % cfg.cloud_address(network, site, host_id)],
+                     [e_ports[s1], macs[site.abbr]['e_s1'],
+                      cfg.cloud_mac(network, site, host_id),
+                      network.vlan])
+
         for network in cfg.l3_networks_for_site(site):
             local_route = evpn_routes.l3_route(network.id, site.abbr)
             if local_route is None:
@@ -184,8 +195,8 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             local_sid = local_route.sid
             _add(commands[e], names, 'local_sid', 'srv6_decap',
                  ['%s/128' % local_sid],
-                 [e_ports[s1], macs[site.abbr]['e_s1'],
-                  macs[site.abbr]['clouds'][network.id], network.vlan])
+                 [network.id, e_ports[s1], macs[site.abbr]['e_s1'],
+                  cfg.cloud_mac(network, site, 1), network.vlan])
 
             # The Linux core routers use underlay source addresses.  Replies
             # from cloud servers therefore have an underlay destination and
@@ -215,6 +226,12 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                 if route.origin != site.abbr
             ]
             remote_mac_routes.sort(key=lambda item: item[0].id)
+            remote_sites = []
+            seen_sites = set()
+            for remote_site, _ in remote_mac_routes:
+                if remote_site.id not in seen_sites:
+                    seen_sites.add(remote_site.id)
+                    remote_sites.append(remote_site)
 
             if cfg.l2_tunnel == 'srv6':
                 _add(commands[e], names, 'local_sid', 'srv6_l2_decap',
@@ -233,11 +250,11 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
 
                 group_id = network.vlan * 2
                 nodes = [(remote_site.id, [c_port])
-                         for remote_site, _ in remote_mac_routes]
+                         for remote_site in remote_sites]
                 _add_mc_group(commands[e], groups[e], group_id, nodes)
                 _add(commands[e], names, 'l2_bum', 'set_l2_bum',
                      [network.vlan, e_ports[s1]], [group_id])
-                for remote_site, _ in remote_mac_routes:
+                for remote_site in remote_sites:
                     remote_route = evpn_routes.imet_route(
                         network.id, remote_site.abbr)
                     _add(commands[e], names, 'l2_rep_sid',
@@ -305,18 +322,19 @@ def _set_addr(host, intf, address):
 
 
 def _configure_cloud_interfaces(net, cfg):
-    """Create one VLAN subinterface per slice on the single site cloud host."""
+    """Create one VLAN subinterface per slice on every site cloud host."""
     for site in cfg.sites:
-        cloud = net.get(cloud_name(site))
-        parent = _host_intf(cloud, s1_name(site))
-        for network in cfg.networks_for_site(site):
-            ifname = cfg.vlan_ifname(network)
-            cloud.cmd('ip link del %s 2>/dev/null || true' % ifname)
-            cloud.cmd('ip link add link %s name %s type vlan id %d'
-                      % (parent.name, ifname, network.vlan))
-            cloud.cmd('ip link set dev %s address %s'
-                      % (ifname, cfg.cloud_mac(network, site)))
-            cloud.cmd('ip link set dev %s up' % ifname)
+        for host_id in cfg.host_ids():
+            cloud = net.get(cloud_name(site, host_id))
+            parent = _host_intf(cloud, s1_name(site))
+            for network in cfg.networks_for_site(site):
+                ifname = cfg.vlan_ifname(network)
+                cloud.cmd('ip link del %s 2>/dev/null || true' % ifname)
+                cloud.cmd('ip link add link %s name %s type vlan id %d'
+                          % (parent.name, ifname, network.vlan))
+                cloud.cmd('ip link set dev %s address %s'
+                          % (ifname, cfg.cloud_mac(network, site, host_id)))
+                cloud.cmd('ip link set dev %s up' % ifname)
 
 
 def _configure_addresses(net, cfg):
@@ -360,10 +378,11 @@ def _configure_addresses(net, cfg):
               '2001:255:0:100::2000/64')
 
     for site in cfg.sites:
-        cloud = net.get(cloud_name(site))
-        for network in cfg.networks_for_site(site):
-            _set_addr(cloud, cfg.vlan_ifname(network),
-                      cfg.cloud_address(network, site) + '/64')
+        for host_id in cfg.host_ids():
+            cloud = net.get(cloud_name(site, host_id))
+            for network in cfg.networks_for_site(site):
+                _set_addr(cloud, cfg.vlan_ifname(network),
+                          cfg.cloud_address(network, site, host_id) + '/64')
 
 
 def _core_next(net, cfg, site, target):
@@ -441,69 +460,62 @@ def _configure_routers(net, cfg, macs):
             c.cmd('ip -6 route replace %s via %s dev %s'
                   % (cfg.underlay_network(target), next_hop, intf.name))
 
-        cloud = net.get(cloud_name(site))
-        l3_interfaces = []
-        for network in cfg.networks_for_site(site):
-            ifname = cfg.vlan_ifname(network)
-            if network.vpn == 'l3':
-                gateway = cfg.cloud_gateway(network, site)
-                e_mac = macs[site.abbr]['e_s1']
-                cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                          % (gateway, e_mac, ifname))
-                table_id = 20000 + network.id
-                cloud.cmd('ip -6 route replace %s dev %s table %d'
-                          % (cfg.business_network(network, site),
-                             ifname, table_id))
+        for host_id in cfg.host_ids():
+            cloud = net.get(cloud_name(site, host_id))
+            l3_interfaces = []
+            for network in cfg.networks_for_site(site):
+                ifname = cfg.vlan_ifname(network)
+                host_addr = cfg.cloud_address(network, site, host_id)
+                if network.vpn == 'l3':
+                    gateway = cfg.cloud_gateway(network, site)
+                    e_mac = macs[site.abbr]['e_s1']
+                    cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s '
+                              'nud permanent' % (gateway, e_mac, ifname))
+                    table_id = 20000 + network.id
+                    cloud.cmd('ip -6 route replace %s dev %s table %d'
+                              % (cfg.business_network(network, site),
+                                 ifname, table_id))
+                    _run_ip(cloud,
+                            'ip -6 route replace default table %d via %s '
+                            'dev %s onlink' % (table_id, gateway, ifname),
+                            'L3 默认路由')
+                    cloud.cmd('ip -6 rule add from %s table %d priority %d'
+                              % (host_addr, table_id, 10000 + network.id))
+                    cloud.cmd('ip -6 rule add to 240a:a806:%d::/48 table %d '
+                              'priority %d' % (network.id, table_id,
+                                              20000 + network.id))
+                    l3_interfaces.append((network, gateway, ifname))
+                else:
+                    table_id = 30000 + network.id
+                    cloud.cmd('ip -6 route replace %s dev %s table %d'
+                              % (cfg.l2_network(network), ifname, table_id))
+                    cloud.cmd('ip -6 rule add from %s table %d priority %d'
+                              % (host_addr, table_id, 10000 + network.id))
+                    gateway = cfg.central_address(network, site)
+                    cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s '
+                              'nud permanent'
+                              % (gateway, macs[site.abbr]['e_s1'], ifname))
+                    _run_ip(cloud,
+                            'ip -6 route replace default table %d via %s '
+                            'dev %s onlink' % (table_id, gateway, ifname),
+                            'L2 默认路由')
+                    for remote_site in cfg.network_sites(network):
+                        if remote_site.id == site.id:
+                            continue
+                        for remote_host in cfg.host_ids():
+                            remote_addr = cfg.cloud_address(
+                                network, remote_site, remote_host)
+                            remote_mac = cfg.cloud_mac(
+                                network, remote_site, remote_host)
+                            cloud.cmd(
+                                'ip -6 neigh replace %s lladdr %s dev %s '
+                                'nud permanent'
+                                % (remote_addr, remote_mac, ifname))
+            if l3_interfaces:
+                network, gateway, ifname = l3_interfaces[0]
                 _run_ip(cloud,
-                        'ip -6 route replace default table %d via %s dev %s '
-                        'onlink' % (table_id, gateway, ifname),
-                        'L3 默认路由')
-                # Select the per-slice routing table by source and by the
-                # destination /48.  The source rule keeps a packet sourced
-                # from one slice from leaking into another slice's table.
-                cloud.cmd('ip -6 rule add from %s table %d priority %d'
-                          % (cfg.cloud_address(network, site), table_id,
-                             10000 + network.id))
-                cloud.cmd('ip -6 rule add to 240a:a806:%d::/48 table %d '
-                          'priority %d' % (network.id, table_id,
-                                          20000 + network.id))
-                l3_interfaces.append((network, gateway, ifname))
-            else:
-                table_id = 30000 + network.id
-                cloud.cmd('ip -6 route replace %s dev %s table %d'
-                          % (cfg.l2_network(network), ifname, table_id))
-                cloud.cmd('ip -6 rule add from %s table %d priority %d'
-                          % (cfg.cloud_address(network, site), table_id,
-                             10000 + network.id))
-                # A default route keeps off-subnet traffic inside this
-                # slice.  Without it the from-table would miss and Linux
-                # would fall through to the main table, where the kernel's
-                # connected routes for the other slices would inject the
-                # packet into the wrong VSI.
-                gateway = cfg.central_address(network, site)
-                cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s '
-                          'nud permanent'
-                          % (gateway, macs[site.abbr]['e_s1'], ifname))
-                _run_ip(cloud,
-                        'ip -6 route replace default table %d via %s dev %s '
-                        'onlink' % (table_id, gateway, ifname),
-                        'L2 默认路由')
-                for remote_site in cfg.network_sites(network):
-                    if remote_site.id == site.id:
-                        continue
-                    remote_addr = cfg.cloud_address(network, remote_site)
-                    remote_mac = macs[remote_site.abbr]['clouds'][network.id]
-                    cloud.cmd(
-                        'ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                        % (remote_addr, remote_mac, ifname))
-
-        # A single main-table default keeps public/other traffic usable.
-        # L3 destinations are overridden by the per-network rules above.
-        if l3_interfaces:
-            network, gateway, ifname = l3_interfaces[0]
-            _run_ip(cloud,
-                    'ip -6 route replace default via %s dev %s onlink'
-                    % (gateway, ifname), '主机默认路由')
+                        'ip -6 route replace default via %s dev %s onlink'
+                        % (gateway, ifname), '主机默认路由')
 
 
 def _site_macs(net, cfg):
@@ -511,10 +523,6 @@ def _site_macs(net, cfg):
         site.abbr: {
             'e_s1': _switch_mac(net, e_name(site), s1_name(site)),
             'e_c': _switch_mac(net, e_name(site), c_name(site)),
-            'clouds': {
-                network.id: cfg.cloud_mac(network, site)
-                for network in cfg.networks_for_site(site)
-            },
         }
         for site in cfg.sites
     }

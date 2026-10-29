@@ -45,6 +45,7 @@ class ParallelConfig:
     fiti: object
     l2_tunnel: str = 'srv6'
     underlay: Dict[str, str] = field(default_factory=dict)
+    hosts_per_site: int = 1
 
     def site(self, abbr: str) -> Site:
         for item in self.sites:
@@ -90,17 +91,25 @@ class ParallelConfig:
         """Short Linux VLAN subinterface name inside the cloud netns."""
         return 'v%d' % network.vlan
 
-    def cloud_mac(self, network: Network, site: Site) -> str:
-        """Deterministic per-slice MAC on the single cloud host.
+    def host_ids(self):
+        """Host indexes inside one site (1..hosts_per_site)."""
+        return range(1, int(self.hosts_per_site) + 1)
 
-        The 16-bit site and network IDs are stored in separate bytes, so
-        network 1 and 257 (or 256 and 0) cannot collide.
+    def cloud_mac(self, network: Network, site: Site,
+                  host: int = 1) -> str:
+        """Deterministic MAC for one cloud host and one slice.
+
+        Six bytes: locally-administered prefix, 16-bit site, 16-bit network,
+        8-bit host index.  Host 1 keeps the previous MAC value.
         """
         site_id = int(site.id)
         network_id = int(network.id)
-        return '02:%02x:%02x:%02x:%02x:01' % (
+        host_id = int(host)
+        if not 1 <= host_id <= 255:
+            raise ValueError('主机编号必须在 1-255: %s' % host_id)
+        return '02:%02x:%02x:%02x:%02x:%02x' % (
             (site_id >> 8) & 0xff, site_id & 0xff,
-            (network_id >> 8) & 0xff, network_id & 0xff)
+            (network_id >> 8) & 0xff, network_id & 0xff, host_id)
 
     def srv6_sid(self, network: Network, site: Site) -> str:
         """Per-site, per-network SRv6 SID used by the static L3VPN PE.
@@ -148,21 +157,30 @@ class ParallelConfig:
         return str(net.network_address + 2)
 
     def cloud_address(self, network: Network, site: Site,
-                      offset: int = None) -> str:
+                      host: int = 1, offset: int = None) -> str:
+        """Address of one cloud host inside its slice.
+
+        L3 hosts stay in the site /64 (host 1 = ::10, host 2 = ::11, ...).
+        L2 slices are a flat /64, so extra hosts are placed in a high offset
+        range to keep the existing host-1 addresses stable.
+        """
+        host_id = int(host)
         if network.vpn == 'l2':
             net = self.l2_network(network)
             if offset is None:
-                # Keep the original bj ::10 / sh ::11 addresses, and give
-                # additional flat-/64 sites unique offsets (gz ::12, cd ::13).
-                offset = 0x10 + max(0, site.id - 1)
+                offset = (0x10 + max(0, site.id - 1)
+                          + (host_id - 1) * 0x100)
         else:
             net = self.business_network(network, site)
             if offset is None:
-                offset = 0x10
+                offset = 0x10 + (host_id - 1)
         return str(net.network_address + int(offset))
 
-    def cloud_gateway(self, network: Network, site: Site) -> str:
-        return self.cloud_address(network, site, 1)
+    def cloud_gateway(self, network: Network, site: Site,
+                      host: int = 1) -> str:
+        # All hosts of a site share the same gateway address; the static
+        # neighbor entry points at the site PE.
+        return self.cloud_address(network, site, 1, 1)
 
     def network_map(self) -> Dict[int, Network]:
         return {item.id: item for item in self.networks}
@@ -247,6 +265,9 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     l2_tunnel = str(raw.get('l2_tunnel', 'srv6')).lower()
     if l2_tunnel not in ('srv6', 'vxlan'):
         raise ValueError('l2_tunnel 必须是 srv6/vxlan: %s' % l2_tunnel)
+    hosts_per_site = int(raw.get('hosts_per_site', 1))
+    if not 1 <= hosts_per_site <= 255:
+        raise ValueError('hosts_per_site 必须在 1-255: %s' % hosts_per_site)
     fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
     if not os.path.isabs(fiti_topology):
         fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)
@@ -270,6 +291,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         fiti=fiti,
         l2_tunnel=l2_tunnel,
         underlay=dict(raw.get('underlay', {}) or {}),
+        hosts_per_site=hosts_per_site,
     )
 
 
@@ -280,6 +302,7 @@ def dump_config(cfg: ParallelConfig) -> None:
     print('FITI 核心: %s（%d 条链路）'
           % (cfg.fiti_topology, len(cfg.fiti.links)))
     print('L2 隧道: %s' % cfg.l2_tunnel)
+    print('每站点主机: %d' % cfg.hosts_per_site)
     print('并行网络:')
     for network in cfg.networks:
         print('  ID=%d VLAN=%d VPN=%s'
@@ -290,8 +313,9 @@ def dump_config(cfg: ParallelConfig) -> None:
                 subnet = cfg.l2_network(network)
             else:
                 subnet = cfg.business_network(network, site)
-            print('    %s: 业务 %s  互联 %s  云地址 %s'
-                  % (site.abbr,
-                     subnet,
-                     cfg.interconnect_network(network, site),
-                     cfg.cloud_address(network, site)))
+            print('    %s: 业务 %s  互联 %s'
+                  % (site.abbr, subnet,
+                     cfg.interconnect_network(network, site)))
+            for host_id in cfg.host_ids():
+                print('      主机 %d: %s' % (
+                    host_id, cfg.cloud_address(network, site, host_id)))

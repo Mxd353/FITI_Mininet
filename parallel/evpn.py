@@ -60,6 +60,7 @@ class EvpnMacIpRoute:
     sid: str
     origin: str
     next_hop: str
+    host: int = 1
     route_type: str = field(default=ROUTE_MAC_IP, init=False)
 
     def key(self):
@@ -77,6 +78,7 @@ class EvpnMacIpRoute:
             'sid': self.sid,
             'origin': self.origin,
             'next_hop': self.next_hop,
+            'host': self.host,
         }
 
 
@@ -191,7 +193,8 @@ class RouteTable:
                 route = EvpnMacIpRoute(
                     rd=raw['rd'], rt=rt, mac=raw['mac'], ip=raw['ip'],
                     vni=int(raw['vni']), sid=raw['sid'],
-                    origin=raw['origin'], next_hop=raw['next_hop'])
+                    origin=raw['origin'], next_hop=raw['next_hop'],
+                    host=int(raw.get('host', 1)))
             elif kind == ROUTE_IMET:
                 route = EvpnInclusiveMulticastRoute(
                     rd=raw['rd'], rt=rt, vni=int(raw['vni']),
@@ -231,12 +234,13 @@ def build_evpn_routes(cfg: ParallelConfig, net=None,
                 rd=rd, rt=rt, vni=network.id, sid=sid,
                 origin=site.abbr))
             if net is not None and include_l2_mac:
-                table.advertise(EvpnMacIpRoute(
-                    rd=rd, rt=rt,
-                    mac=cfg.cloud_mac(network, site),
-                    ip=cfg.cloud_address(network, site),
-                    vni=network.id, sid=sid, origin=site.abbr,
-                    next_hop=sid))
+                for host_id in cfg.host_ids():
+                    table.advertise(EvpnMacIpRoute(
+                        rd=rd, rt=rt,
+                        mac=cfg.cloud_mac(network, site, host_id),
+                        ip=cfg.cloud_address(network, site, host_id),
+                        vni=network.id, sid=sid, origin=site.abbr,
+                        next_hop=sid, host=host_id))
     return table
 
 

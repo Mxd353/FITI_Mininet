@@ -13,7 +13,7 @@ cases:
         peer: C_tjn
         action: down
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3501
         target: 240a:a806:1:14::10
         expect: fail
@@ -24,7 +24,7 @@ cases:
       - type: sleep
         seconds: 2
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3501
         target: 240a:a806:1:14::10
         expect: pass

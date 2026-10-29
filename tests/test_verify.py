@@ -247,13 +247,16 @@ class RenderTest(unittest.TestCase):
 
     def test_sim_rows(self):
         rows = render_sim(self.cfg).strip().splitlines()
-        self.assertEqual(len(rows), 1 + len(self.cfg.sites) * 4)
+        hosts = self.cfg.hosts_per_site
+        self.assertEqual(len(rows), 1 + len(self.cfg.sites) * 4 * hosts)
         self.assertIn('3501', rows[1])
         self.assertIn('fd00:0:1:1::1:1', rows[1])
+        self.assertIn('240a:a806:1:1::11', rows[2])
 
     def test_ovs_lines(self):
         lines = render_ovs(self.cfg).strip().splitlines()
-        self.assertEqual(len(lines), len(self.cfg.sites) * 4)
+        hosts = self.cfg.hosts_per_site
+        self.assertEqual(len(lines), len(self.cfg.sites) * (2 + 2 * hosts))
         self.assertTrue(any('1-3500,3901-4094' in line for line in lines))
 
     def test_summary_networks(self):

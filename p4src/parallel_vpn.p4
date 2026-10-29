@@ -362,8 +362,9 @@ control IngressImpl(inout headers_t hdr,
         default_action = drop;
     }
 
-    action srv6_decap(bit<9> port, bit<48> smac, bit<48> dmac,
-                      bit<12> out_vlan) {
+    action srv6_decap(bit<16> vrf_id, bit<9> port, bit<48> smac,
+                      bit<48> dmac, bit<12> out_vlan) {
+        meta.vrf_id = vrf_id;
         hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_VLAN;
@@ -691,8 +692,13 @@ control IngressImpl(inout headers_t hdr,
                 // Outer VXLAN packet from the remote E router.
                 vxlan_map.apply();
             } else if (hdr.srh.isValid()) {
-                // SRv6 packet destined to a local SID.
+                // SRv6 packet destined to a local SID.  For L3VPN the
+                // decap action records the VRF and the inner destination
+                // is looked up again so it is delivered to the owning host.
                 local_sid.apply();
+                if (meta.vrf_id != 0 && hdr.ipv6.isValid()) {
+                    l3_fib.apply();
+                }
             } else {
                 if (meta.core_port == 1) {
                     if (hdr.ipv6.isValid()) {

@@ -105,37 +105,43 @@ def _huawei_public():
 
 
 def render_sim(cfg):
-    header = ('site\tid\tnetwork\tvlan\tvpn\tbusiness\tinterconnect\t'
-              'cloud\tgateway\tsid')
+    header = ('site\tid\thost\tnetwork\tvlan\tvpn\tbusiness\t'
+              'interconnect\tcloud\tgateway\tsid')
     lines = [header]
     for site in sorted(cfg.sites, key=lambda item: item.id):
         for network in sorted(cfg.networks_for_site(site),
                               key=lambda item: item.id):
-            lines.append('\t'.join([
-                site.abbr, str(site.id), str(network.id), str(network.vlan),
-                network.vpn,
-                str(cfg.business_network(network, site)),
-                str(cfg.interconnect_network(network, site)),
-                cfg.cloud_address(network, site),
-                cfg.cloud_gateway(network, site),
-                _sid(cfg, network, site),
-            ]))
+            for host_id in cfg.host_ids():
+                lines.append('\t'.join([
+                    site.abbr, str(site.id), str(host_id), str(network.id),
+                    str(network.vlan), network.vpn,
+                    str(cfg.business_network(network, site)),
+                    str(cfg.interconnect_network(network, site)),
+                    cfg.cloud_address(network, site, host_id),
+                    cfg.cloud_gateway(network, site, host_id),
+                    _sid(cfg, network, site),
+                ]))
     return '\n'.join(lines) + '\n'
 
 
 def render_ovs(cfg):
     lines = []
     for site in sorted(cfg.sites, key=lambda item: item.id):
-        lines.append('S1_%s  E口      trunks=1-4094' % site.abbr)
-        lines.append('S1_%s  cloud口  trunks=1-4094' % site.abbr)
-        lines.append('S2_%s  cloud口  trunks=1-4094' % site.abbr)
-        lines.append('S2_%s  A口      trunks=1-3500,3901-4094' % site.abbr)
+        lines.append('S1_%s  E口        trunks=1-4094' % site.abbr)
+        for host_id in cfg.host_ids():
+            lines.append('S1_%s  cl_%s_%d口  trunks=1-4094'
+                         % (site.abbr, site.abbr, host_id))
+        lines.append('S2_%s  A口        trunks=1-3500,3901-4094' % site.abbr)
+        for host_id in cfg.host_ids():
+            lines.append('S2_%s  cl_%s_%d口  trunks=1-4094'
+                         % (site.abbr, site.abbr, host_id))
     return '\n'.join(lines) + '\n'
 
 
 def render_summary(cfg):
     payload = {
         'config': os.path.abspath(cfg.path),
+        'hosts_per_site': cfg.hosts_per_site,
         'sites': [{'id': site.id, 'abbr': site.abbr, 'name': site.name}
                   for site in sorted(cfg.sites, key=lambda item: item.id)],
         'networks': [],

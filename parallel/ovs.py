@@ -103,25 +103,26 @@ def configure_ovs_switches(net, cfg):
     sites = list(cfg.sites)
     workers = min(MAX_WORKERS, len(sites)) or 1
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_configure_site, net, site) for site in sites]
+        futures = [pool.submit(_configure_site, net, cfg, site) for site in sites]
         for future in futures:
             future.result()
 
 
-def _configure_site(net, site):
+def _configure_site(net, cfg, site):
     """Configure one site's S1/S2 bridges."""
     s1 = net.get(s1_name(site))
     s2 = net.get(s2_name(site))
-    cloud = cloud_name(site)
     uplink_s2 = intf_to(s2, a_name(site))
 
     ensure_normal_flow(s1)
     ensure_normal_flow(s2)
 
     set_trunk(s1, intf_to(s1, e_name(site)), ALL_VLANS)
-    set_trunk(s1, intf_to(s1, cloud), ALL_VLANS)
-    set_trunk(s2, intf_to(s2, cloud), ALL_VLANS)
     set_trunk(s2, uplink_s2, NON_PARALLEL_VLANS)
+    for host_id in cfg.host_ids():
+        cloud = cloud_name(site, host_id)
+        set_trunk(s1, intf_to(s1, cloud), ALL_VLANS)
+        set_trunk(s2, intf_to(s2, cloud), ALL_VLANS)
 
     # S2's uplink is the only restrictive policy in the design; make a
     # silent ovs-vsctl typo visible at startup instead of at ping time.

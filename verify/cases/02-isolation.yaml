@@ -8,11 +8,11 @@ cases:
     requires_sites: [sh]
     steps:
       - type: exec
-        node: cl_bj
+        node: cl_bj_1
         command: ip -6 route get 240a:a806:2:2::10 from 240a:a806:1:1::10
         expect_not_contains: unreachable
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3501
         target: 240a:a806:2:2::10
         expect: fail
@@ -22,11 +22,11 @@ cases:
     requires_sites: [sh]
     steps:
       - type: exec
-        node: cl_bj
+        node: cl_bj_1
         command: ip -6 route get 240a:a806:3:1::11 from 240a:a806:1:1::10
         expect_not_contains: unreachable
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: v3501
         target: 240a:a806:3:1::11
         expect: fail
@@ -37,11 +37,11 @@ cases:
     description: 主机回落到主表默认路由，报文在 E 的 VRF 被丢弃
     steps:
       - type: exec
-        node: cl_bj
+        node: cl_bj_1
         command: ip -6 route get 240a:a806:4:1::11 from 240a:a806:3:1::10
         expect_not_contains: unreachable
       - type: ping
-        node: cl_bj
+        node: cl_bj_1
         iface: 240a:a806:3:1::10
         target: 240a:a806:4:1::11
         expect: fail
@@ -52,11 +52,11 @@ cases:
     description: 用源地址绑定，确保报文真的发出并在 E 的 VRF 被丢弃
     steps:
       - type: exec
-        node: cl_sh
+        node: cl_sh_1
         command: ip -6 route get 240a:a806:1:1::10 from 240a:a806:2:2::10
         expect_not_contains: unreachable
       - type: ping
-        node: cl_sh
+        node: cl_sh_1
         iface: 240a:a806:2:2::10
         target: 240a:a806:1:1::10
         expect: fail
