@@ -84,7 +84,6 @@ requirements-p4runtime.txt  P4Runtime Python 依赖
 - bmv2（`simple_switch`、`simple_switch_grpc`、`simple_switch_CLI`）
 - Python 3.8+
 - P4Runtime Python 依赖（建议 venv）
-- root 权限（`sudo`）
 
 P4Runtime 依赖建议装在保留系统 site-packages 的 venv 中，这样仍能 import
 Mininet：
