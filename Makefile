@@ -87,19 +87,21 @@ parallel-run-min: parallel-p4
 parallel-run-no-cli-min: parallel-p4
 	sudo python3 parallel_net.py --config configs/parallel-min.json --no-cli
 
-# 先发 SIGINT 让 Mininet CLI 走 finally 并恢复终端（readline 会处理
-# SIGINT 并还原 termios），再升级到 TERM/KILL；最后兜底 stty sane。
+# 先恢复终端，避免整个清理过程的输出“阶梯式”错位；
+# 然后发 SIGINT 让 Mininet CLI 走 finally（readline 会还原 termios），
+# 再升级到 TERM/KILL。pkill 模式用 [p]/[s] 防止匹配到 recipe 自己的 shell。
 parallel-stop:
-	-sudo pkill -INT -f parallel_net.py
+	-stty sane 2>/dev/null || true
+	-sudo pkill -INT -f '[p]arallel_net.py'
 	-sleep 2
-	-sudo pkill -TERM -f parallel_net.py
+	-sudo pkill -TERM -f '[p]arallel_net.py'
 	-sleep 1
-	-sudo pkill -KILL -f parallel_net.py
-	-sudo pkill -TERM -f simple_switch
+	-sudo pkill -KILL -f '[p]arallel_net.py'
+	-sudo pkill -TERM -f '[s]imple_switch'
 	-sleep 1
-	-sudo pkill -KILL -f simple_switch
+	-sudo pkill -KILL -f '[s]imple_switch'
 	-sudo mn -c
-	-rm -f /tmp/parallel_evpn.sock
+	-sudo rm -f /tmp/parallel_evpn.sock
 	-stty sane 2>/dev/null || true
 	-printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?2004l'
 
