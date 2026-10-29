@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """OVS configuration for the S1/S2 access switches.
 
-The PDF describes S1/S2 as ordinary site switches: S1 allows the parallel
+The requirements document describes S1/S2 as ordinary site switches: S1 allows the parallel
 VLANs on its uplink, S2 rejects them.  Both therefore run as Mininet OVS
 bridges instead of BMv2/P4:
 
@@ -28,7 +28,7 @@ MAX_WORKERS = max(1, int(os.environ.get('PARALLEL_OVS_WORKERS', '16')))
 #: All usable 802.1Q VLANs on a trunk.
 ALL_VLANS = '1-4094'
 
-#: PDF: the S2 uplink rejects parallel-network VLAN 3501-3900.
+#: 需求文档：S2 上行拒绝并行网络 VLAN 3501-3900。
 NON_PARALLEL_VLANS = '1-3500,3901-4094'
 
 PARALLEL_VLAN_MIN = 3501

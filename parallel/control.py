@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Static control plane for the parallel-network scenario.
 
-It installs the data-plane equivalent of the PDF's EVPN/SRv6 routes:
+It installs the data-plane equivalent of the EVPN/SRv6 routes in docs/REQUIREMENTS.md:
 L3VPN/L2VPN use static SRv6 SIDs (L2VPN can fall back to VXLAN),
 and public access uses static FIX routes.  It is not a BGP/EVPN control-plane implementation.
 """

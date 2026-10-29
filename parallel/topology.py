@@ -69,7 +69,7 @@ PUBLIC_FIX = 'fix'
 
 
 class ParallelTopology(Topo):
-    r"""PDF 中 C-E/A-S 站点结构的可扩展仿真拓扑。
+    r"""需求文档中 C-E/A-S 站点结构的可扩展仿真拓扑。
 
     站点内部：
 

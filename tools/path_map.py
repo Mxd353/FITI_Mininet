@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Render the overlay/underlay path map for one or more parallel networks.
 
-The output mirrors the UNIT bitmap document: a business path (which sites and
+The output mirrors docs/REQUIREMENTS.md: a business path (which sites and
 hosts) mapped to a physical device path, with the encapsulation of every
 segment.  It is derived from the same config used by the simulation, so the
 table cannot drift from the topology.

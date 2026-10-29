@@ -467,7 +467,7 @@ tools/
 docs/
 ├── PARALLEL_NETWORK_DESIGN.md
 ├── VERIFICATION.md
-└── 中关村主干网并行网络设计方案.pdf
+└── REQUIREMENTS.md         需求文档（并行网络 + UNIT bitmap 合并）
 
 p4src/parallel_vpn.p4       VLAN + L3/L2VPN + SRv6 + BUM
 parallel_net.py             并行网络 CLI
@@ -477,8 +477,8 @@ parallel_evpn_ctl.py        agent 客户端
 
 ## 已知限制
 
-- 当前是 4 个静态网络，不是 PDF 的 400 个网络；
-- 4 个网络当前覆盖全部 41 站点，尚未按 PDF 精确配置网络成员；
+- 当前是 4 个静态网络，不是 需求文档的 400 个网络；
+- 4 个网络当前覆盖全部 41 站点，尚未按需求文档精确配置网络成员；
 - SID、C 路由和公网路由仍是静态配置；
 - 没有真实 BGP/EVPN 会话、Route Reflector 或 EVPN NLRI 编解码；
 - L2 BUM multicast group 是静态生成的；

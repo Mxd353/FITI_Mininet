@@ -131,7 +131,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 
 ## 需求追溯矩阵
 
-| PDF 要求 | 用例 | 证据 |
+| 需求 | 用例 | 证据 |
 | --- | --- | --- |
 | VLAN 3501-3900 | `vlan-policy-*` | OVS trunks |
 | S1 上行放行 | `vlan-policy-*` | `contains: 3501..3504` |
@@ -217,7 +217,7 @@ OVS 接入配置        17.3s -> 待实测（预计 3~4s）
 ## 路径映射
 
 `tools/path_map.py` 从同一份配置生成“业务路径 → 物理路径 → 每段封装”的
-对照表，格式对应 UNIT bitmap 文档的 4.3/4.4：
+对照表，格式对应 REQUIREMENTS.md 的 3.1/5：
 
 ```bash
 python3 tools/path_map.py --config configs/parallel-min.json \
