@@ -23,6 +23,7 @@ from parallel.bmv2 import switch_cli
 from parallel.config import load_config
 from parallel.ovs import intf_to, trunk_vlans
 from parallel.topology import switch_id
+from verify.progress import Reporter
 from verify.report import (Result, StepDetail, print_summary, write_evidence,
                            write_json, write_junit)
 from verify.spec import SpecError, load_cases, summarize
@@ -284,7 +285,7 @@ class CaseRunner(object):
         return '\n'.join(lines)
 
 
-def _run(args, cfg, cases):
+def _run(args, cfg, cases, reporter=None):
     if os.geteuid() != 0:
         raise SystemExit('功能验证会启动 Mininet，需要用 sudo 运行')
 
@@ -306,22 +307,28 @@ def _run(args, cfg, cases):
             time.sleep(args.settle)
         runner = CaseRunner(net, cfg, agent)
         available = {site.abbr for site in cfg.sites}
-        for case in cases:
+        for index, case in enumerate(cases, 1):
+            if reporter is not None:
+                reporter.start_case(index, case.name)
             missing = [site for site in case.requires_sites
                        if site not in available]
             if missing:
-                results.append(Result(
+                result = Result(
                     name=case.name, status='skip',
-                    reason='缺少站点: %s' % ','.join(missing)))
-                continue
-            result = runner.run_case(case)
-            if result.status == 'fail' and args.evidence:
-                evidence = runner.collect_evidence(case)
-                if evidence:
-                    result.details.append(StepDetail(
-                        0, 'evidence', 'pass', 0.0, output=evidence))
+                    reason='缺少站点: %s' % ','.join(missing))
+            else:
+                result = runner.run_case(case)
+                if result.status == 'fail' and args.evidence:
+                    evidence = runner.collect_evidence(case)
+                    if evidence:
+                        result.details.append(StepDetail(
+                            0, 'evidence', 'pass', 0.0, output=evidence))
             results.append(result)
+            if reporter is not None:
+                reporter.finish_case(result)
     finally:
+        if reporter is not None:
+            reporter.abort()
         if agent is not None:
             stop_evpn_agent(agent)
         if net is not None:
@@ -351,6 +358,16 @@ def main(argv=None):
     parser.add_argument('--evpn-socket', default='/tmp/parallel_evpn.sock')
     parser.add_argument('--settle', type=float, default=1.0,
                         help='启动后等待秒数（默认 1 秒）')
+    parser.add_argument('--no-progress', dest='progress',
+                        action='store_false',
+                        help='不打印逐条进度，只在最后汇总')
+    parser.add_argument('--quiet', action='store_true',
+                        help='逐条进度只显示失败用例')
+    parser.add_argument('--no-color', dest='color', action='store_false',
+                        help='关闭颜色')
+    parser.add_argument('--no-animate', dest='animate',
+                        action='store_false',
+                        help='关闭 spinner 动画')
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -369,9 +386,20 @@ def main(argv=None):
         print('\n共 %d 条用例，配置 %s' % (len(cases), cfg.path))
         return 0
 
-    results = _run(args, cfg, cases)
-    print('')
-    print_summary(results)
+    reporter = None
+    if args.progress:
+        width = max((len(case.name) for case in cases), default=10)
+        reporter = Reporter(len(cases), width=width,
+                            color=args.color, animate=args.animate,
+                            quiet=args.quiet)
+        reporter.header(cfg.path, args.tag, args.all)
+
+    results = _run(args, cfg, cases, reporter)
+    if reporter is not None:
+        reporter.summary(results)
+    else:
+        print('')
+        print_summary(results)
 
     stamp = time.strftime('%Y%m%d-%H%M%S')
     run_dir = os.path.join(args.runs_dir, stamp)

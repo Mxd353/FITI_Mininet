@@ -399,6 +399,7 @@ make verify-full     # 41 站点
 - EVPN agent 动态增删路由；
 - 链路 down/up（默认跳过，`--tag faults`）。
 
+运行时会逐条显示 `PASS`/`FAIL`/`SKIP`、spinner 和 ETA；非 TTY 环境自动关闭动画。
 报告写到 `runs/<时间戳>/`，失败用例会附带表项和路由 dump。
 详见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
 

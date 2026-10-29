@@ -19,6 +19,33 @@ runs/<时间戳>/report.xml
 runs/<时间戳>/evidence/<用例>.txt
 ```
 
+运行时会逐条打印进度，跑完给汇总：
+
+```text
+==> 功能验收：25 条用例，配置 configs/parallel-min.json，标签 全部
+[ 1/25] l3vpn-net1-bj-sh         PASS    2.1s
+[ 2/25] l3vpn-net1-bj-tjn        PASS    2.0s
+[ 3/25] l3vpn-net1-bj-jnn        PASS    2.0s
+[ 4/25] iso-l2-net3-to-net4      FAIL    4.0s
+        期望 100% 丢包，实际 0%（收到 3）
+[ 5/25] vlan-policy-bj           SKIP    0.0s  缺少站点: gz
+
+通过 23，失败 1，跳过 1，共 25（用例耗时 52.3s）
+最慢用例 4.0s
+报告: runs/20261029-160000
+```
+
+执行中终端会显示 spinner 和 ETA；非 TTY 环境（CI、重定向）自动关闭动画。
+
+控制输出：
+
+```bash
+--no-progress    只在最后打印汇总
+--quiet          逐条只显示失败的用例
+--no-color       关闭颜色
+--no-animate     关闭 spinner
+```
+
 只看某一类：
 
 ```bash

@@ -8,6 +8,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from parallel.config import load_config
+from verify.progress import Reporter
 from verify.report import Result, StepDetail, write_json, write_junit
 from verify.runner import CaseRunner, parse_ping
 from verify.spec import SpecError, load_cases
@@ -120,6 +121,46 @@ class RunnerLogicTest(unittest.TestCase):
         result = self._run(100, 'pass')
         self.assertEqual(result.status, 'fail')
         self.assertIn('丢包', result.reason)
+
+
+class ProgressTest(unittest.TestCase):
+    def test_plain_output(self):
+        import io
+        stream = io.StringIO()
+        reporter = Reporter(3, width=12, stream=stream, animate=False,
+                            color=False)
+        reporter.header('configs/x.json', ['core'])
+        reporter.start_case(1, 'case-a')
+        reporter.finish_case(Result(name='case-a', status='pass'))
+        reporter.start_case(2, 'case-b')
+        reporter.finish_case(Result(name='case-b', status='fail',
+                                    reason='期望可达'))
+        reporter.start_case(3, 'case-c')
+        reporter.finish_case(Result(name='case-c', status='skip',
+                                    reason='缺少站点: gz'))
+        reporter.summary([Result(name='case-a', status='pass'),
+                          Result(name='case-b', status='fail'),
+                          Result(name='case-c', status='skip')])
+        text = stream.getvalue()
+        self.assertIn('case-a', text)
+        self.assertIn('PASS', text)
+        self.assertIn('FAIL', text)
+        self.assertIn('SKIP', text)
+        self.assertIn('通过 1，失败 1，跳过 1', text)
+        self.assertNotIn('\033[', text)
+
+    def test_quiet_hides_passes(self):
+        import io
+        stream = io.StringIO()
+        reporter = Reporter(2, stream=stream, animate=False, color=False,
+                            quiet=True)
+        reporter.start_case(1, 'ok')
+        reporter.finish_case(Result(name='ok', status='pass'))
+        reporter.start_case(2, 'bad')
+        reporter.finish_case(Result(name='bad', status='fail', reason='x'))
+        text = stream.getvalue()
+        self.assertNotIn('ok', text)
+        self.assertIn('bad', text)
 
 
 class ReportTest(unittest.TestCase):
