@@ -12,6 +12,7 @@ from mininet.net import Mininet
 
 from fiti.log import Progress, ensure_log_dir, quiet_mininet_console
 from fiti.p4_mininet import P4Host
+from parallel.cleanup import cleanup_stale_links, other_instances
 from parallel.config import ParallelConfig
 from parallel.p4 import compile_p4
 from parallel.switch import make_switch_factory
@@ -60,6 +61,13 @@ def build_parallel_net(cfg: ParallelConfig, json_path=None,
                        install_rules=True):
     json_path = os.path.abspath(json_path or cfg.p4_json)
     if start:
+        running = other_instances()
+        if running:
+            raise RuntimeError(
+                '检测到另一份 parallel_net.py 正在运行（PID %s），'
+                '请先 make parallel-stop'
+                % ', '.join(str(pid) for pid in running))
+        cleanup_stale_links()
         json_path = compile_p4(out=json_path)
     base = int(thrift_base if thrift_base is not None else cfg.thrift_base)
     requested_base = base

@@ -489,6 +489,27 @@ sudo ss -tanp | grep ':端口号'
 sudo lsof -nP -iTCP:端口号
 ```
 
+### 启动报 `File exists`
+
+原因是上一次实例没有完全清理，留下了 `A_bj-eth1`、`S2_bj-eth1` 一类接口：
+
+```text
+Error creating interface pair (A_bj-eth1,S2_bj-eth1): RTNETLINK answers: File exists
+```
+
+现在的处理：
+
+- `make parallel-run*` 启动前会自动删除残留接口；
+- 如果检测到另一份 `parallel_net.py` 还在运行，会直接拒绝并打印 PID；
+- `make parallel-stop` 会先等 CLI 正常退出（最多 20 秒），再升级到 KILL。
+
+手动检查：
+
+```bash
+sudo python3 -m parallel.cleanup --dry-run   # 只列出残留接口
+sudo python3 -m parallel.cleanup             # 删除
+```
+
 ### `parallel-stop` 后终端不回显
 
 原因：Mininet CLI 使用 readline，进程被 `SIGKILL` 时没机会恢复 termios，

@@ -35,7 +35,7 @@ parallel-dump-min:
 parallel-evpn-dump-min:
 	python3 parallel_evpn.py --config configs/parallel-min.json --dump --validate
 
-test: test-evpn test-ovs test-control test-verify
+test: test-evpn test-ovs test-control test-cleanup test-verify
 
 test-evpn:
 	python3 -m unittest tests.test_evpn
@@ -45,6 +45,9 @@ test-ovs:
 
 test-control:
 	python3 -m unittest tests.test_control
+
+test-cleanup:
+	python3 -m unittest tests.test_cleanup
 
 test-verify:
 	python3 -m unittest tests.test_verify
@@ -93,14 +96,15 @@ parallel-run-no-cli-min: parallel-p4
 parallel-stop:
 	-stty sane 2>/dev/null || true
 	-sudo pkill -INT -f '[p]arallel_net.py' || true
-	-sleep 2
+	-@i=0; while [ $$i -lt 40 ] && pgrep -f '[p]arallel_net.py' >/dev/null 2>&1; do i=$$((i+1)); sleep 0.5; done
 	-sudo pkill -TERM -f '[p]arallel_net.py' || true
-	-sleep 1
+	-@i=0; while [ $$i -lt 10 ] && pgrep -f '[p]arallel_net.py' >/dev/null 2>&1; do i=$$((i+1)); sleep 0.5; done
 	-sudo pkill -KILL -f '[p]arallel_net.py' || true
 	-sudo pkill -TERM -f '[s]imple_switch' || true
-	-sleep 1
+	-@i=0; while [ $$i -lt 10 ] && pgrep -f '[s]imple_switch' >/dev/null 2>&1; do i=$$((i+1)); sleep 0.5; done
 	-sudo pkill -KILL -f '[s]imple_switch' || true
 	-sudo mn -c
+	-sudo python3 -m parallel.cleanup || true
 	-sudo rm -f /tmp/parallel_evpn.sock
 	-stty sane 2>/dev/null || true
 	-printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?2004l'
