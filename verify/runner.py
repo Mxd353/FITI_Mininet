@@ -245,7 +245,18 @@ class CaseRunner(object):
     def _step_link(self, step):
         node = self._node(step['node'])
         intf = self._intf_to(node, step['peer'])
-        node.cmd('ip link set dev %s %s' % (intf.name, step['action']))
+        if step['action'] == 'down':
+            # Drop 100% of egress traffic instead of ``ip link set down``:
+            # bringing an IPv6 interface down removes its addresses and
+            # routes permanently, so "up" would not restore reachability.
+            node.cmd('tc qdisc replace dev %s root netem loss 100%%'
+                     % intf.name)
+            state = node.cmd('tc qdisc show dev %s' % intf.name)
+            if 'netem' not in state:
+                raise StepError('%s 无法注入丢包: %s'
+                                % (intf.name, state.strip()))
+        else:
+            node.cmd('tc qdisc del dev %s root 2>/dev/null' % intf.name)
         return '%s %s' % (intf.name, step['action'])
 
     def _step_sleep(self, step):

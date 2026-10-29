@@ -6,7 +6,7 @@ cases:
   - name: link-down-bj-tjn
     tags: [faults]
     requires_sites: [tjn]
-    description: 断开北京-天津链路后应不通，恢复后应重新可达
+    description: 在北京-天津链路注入 100% 丢包后应不通，恢复后应重新可达
     steps:
       - type: link
         node: C_bj

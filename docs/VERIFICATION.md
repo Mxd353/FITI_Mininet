@@ -60,6 +60,10 @@ sudo python3 verify/runner.py --config configs/parallel-min.json --tag faults
 
 故障用例默认不执行，需要 `--tag faults` 或 `--all`。
 
+`link: down` 用 `tc netem loss 100%` 注入丢包，而不是 `ip link set down`：
+IPv6 接口 down 之后地址和路由会被删除，up 也不会自动恢复，会把测试环境
+永久留在不可达状态。netem 只影响转发，恢复时删掉 qdisc 即可。
+
 ## 用例覆盖
 
 | 文件 | 内容 | 数量 |
@@ -100,7 +104,7 @@ cases:
 | `linux_route` | `node` `match` `table` `present` | Linux 路由表 |
 | `evpn_advertise` | `route` | 动态下发路由 |
 | `evpn_withdraw` | `route` | 动态撤销路由 |
-| `link` | `node` `peer` `action` | 链路 up/down |
+| `link` | `node` `peer` `action` | 链路故障注入（netem 100% 丢包 / 恢复） |
 | `sleep` | `seconds` | 等待 |
 
 `ping` 会先发一个预热包，再发 `count` 个；`expect: pass` 失败时默认重试一次
