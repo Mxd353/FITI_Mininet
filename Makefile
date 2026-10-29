@@ -35,13 +35,16 @@ parallel-dump-min:
 parallel-evpn-dump-min:
 	python3 parallel_evpn.py --config configs/parallel-min.json --dump --validate
 
-test: test-evpn test-ovs test-verify
+test: test-evpn test-ovs test-control test-verify
 
 test-evpn:
 	python3 -m unittest tests.test_evpn
 
 test-ovs:
 	python3 -m unittest tests.test_ovs
+
+test-control:
+	python3 -m unittest tests.test_control
 
 test-verify:
 	python3 -m unittest tests.test_verify

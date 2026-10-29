@@ -9,6 +9,8 @@ and public access uses static FIX routes.  It is not a BGP/EVPN control-plane im
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 
 from parallel.bmv2 import mc_handles, switch_cli
 from parallel.config import ParallelConfig
@@ -16,6 +18,11 @@ from parallel.evpn import build_evpn_routes, validate_evpn_routes
 from parallel.p4 import runtime_names
 from parallel.topology import (a_name, c_name, cloud_name, e_name,
                                s1_name, s2_name)
+
+#: How many site PEs to program at once.  Each worker owns one
+#: simple_switch_CLI process, so updates to one switch stay ordered while
+#: different switches run in parallel.
+MAX_WORKERS = max(1, int(os.environ.get('PARALLEL_CONTROL_WORKERS', '16')))
 
 
 def _peer_intf(intf):
@@ -253,22 +260,34 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
         # S2 uplink VLAN filter are configured in parallel/ovs.py, so no
         # static L2 FIB or multicast group is installed here.
 
-    for name, cmds in commands.items():
-        thrift_port = net.get(name).thrift_port
-        output = switch_cli(thrift_port, cmds)
-        handles = mc_handles(output)
-        expected = sum(count for _, count in groups[name])
-        if len(handles) != expected:
-            raise RuntimeError(
-                '%s: 创建了 %d 个 multicast node，解析到 %d 个 handle'
-                % (name, expected, len(handles)))
-        associations = []
-        index = 0
-        for group_id, count in groups[name]:
-            for _ in range(count):
-                associations.append('mc_node_associate %d %d'
-                                    % (group_id, handles[index]))
-                index += 1
+    workers = min(MAX_WORKERS, len(commands)) or 1
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(_install_one_switch, net, name, cmds, groups)
+            for name, cmds in commands.items()
+        ]
+        for future in futures:
+            future.result()
+
+
+def _install_one_switch(net, name, cmds, groups):
+    """Program one PE and wire up its BUM multicast groups."""
+    thrift_port = net.get(name).thrift_port
+    output = switch_cli(thrift_port, cmds)
+    handles = mc_handles(output)
+    expected = sum(count for _, count in groups[name])
+    if len(handles) != expected:
+        raise RuntimeError(
+            '%s: 创建了 %d 个 multicast node，解析到 %d 个 handle'
+            % (name, expected, len(handles)))
+    associations = []
+    index = 0
+    for group_id, count in groups[name]:
+        for _ in range(count):
+            associations.append('mc_node_associate %d %d'
+                                % (group_id, handles[index]))
+            index += 1
+    if associations:
         switch_cli(thrift_port, associations)
 
 
