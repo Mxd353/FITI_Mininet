@@ -321,113 +321,106 @@ def _set_addr(host, intf, address):
     host.cmd('ip -6 addr replace %s dev %s' % (address, name))
 
 
-def _configure_cloud_interfaces(net, cfg):
-    """Create the host access stack: VLAN uplink, bridge and VXLAN.
+def _configure_cloud_host(net, cfg, site, host_id, e_mac):
+    """Create the per-slice host bridges, VXLAN VTEPs and FDB entries."""
+    cloud = net.get(cloud_name(site, host_id))
+    parent = _host_intf(cloud, s1_name(site))
+    if cfg.hosts_per_site <= 1:
+        for network in cfg.networks_for_site(site):
+            ifname = cfg.vlan_ifname(network)
+            cloud.cmd('ip link del %s 2>/dev/null || true' % ifname)
+            cloud.cmd('ip link add link %s name %s type vlan id %d'
+                      % (parent.name, ifname, network.vlan))
+            cloud.cmd('ip link set dev %s address %s'
+                      % (ifname, cfg.cloud_mac(network, site, host_id)))
+            cloud.cmd('ip link set dev %s up' % ifname)
+        return
 
-    With two hosts per site the tenant interface sits on a per-slice Linux
-    bridge that joins three ports: the tenant veth, the VLAN uplink to S1
-    and a VXLAN VTEP to the other host.  Host-to-host traffic is therefore
-    VXLAN on the site switch, matching the UNIT bitmap document; traffic to
-    the PE still leaves as a VLAN frame.
-    """
+    if cfg.hosts_per_site > 2:
+        raise RuntimeError('宿主机 VXLAN 目前只支持每站点 2 台主机')
+
+    underlay = cfg.underlay_ifname()
+    local_ip = cfg.underlay_address(site, host_id)
+    peer = 2 if host_id == 1 else 1
+    peer_ip = cfg.underlay_address(site, peer)
+
+    cloud.cmd('ip link del %s 2>/dev/null || true' % underlay)
+    cloud.cmd('ip link add link %s name %s type vlan id 4000'
+              % (parent.name, underlay))
+    cloud.cmd('ip addr replace %s/24 dev %s' % (local_ip, underlay))
+    cloud.cmd('ip link set dev %s up' % underlay)
+
+    for network in cfg.networks_for_site(site):
+        uplink = cfg.vlan_ifname(network)
+        bridge = cfg.bridge_name(site, host_id, network)
+        tap = cfg.tenant_ifname(site, host_id, network)
+        port = 'bp_%s_%d_%d' % (site.abbr, host_id, network.id)
+        vxlan = cfg.vxlan_ifname(site, host_id, network)
+
+        cloud.cmd('ip link del %s 2>/dev/null || true' % bridge)
+        cloud.cmd('ip link del %s 2>/dev/null || true' % uplink)
+        cloud.cmd('ip link del %s 2>/dev/null || true' % tap)
+        cloud.cmd('ip link del %s 2>/dev/null || true' % port)
+        cloud.cmd('ip link del %s 2>/dev/null || true' % vxlan)
+
+        cloud.cmd('ip link add name %s type bridge' % bridge)
+        cloud.cmd('ip link set dev %s up' % bridge)
+
+        cloud.cmd('ip link add link %s name %s type vlan id %d'
+                  % (parent.name, uplink, network.vlan))
+        cloud.cmd('ip link set dev %s up' % uplink)
+        cloud.cmd('ip link set dev %s master %s' % (uplink, bridge))
+
+        cloud.cmd('ip link add %s type veth peer name %s' % (tap, port))
+        cloud.cmd('ip link set dev %s address %s'
+                  % (tap, cfg.cloud_mac(network, site, host_id)))
+        cloud.cmd('ip link set dev %s up' % tap)
+        cloud.cmd('ip link set dev %s master %s' % (port, bridge))
+        cloud.cmd('ip link set dev %s up' % port)
+
+        cloud.cmd('ip link add %s type vxlan id %d local %s '
+                  'remote %s dev %s dstport 4789'
+                  % (vxlan, network.id, local_ip, peer_ip, underlay))
+        cloud.cmd('ip link set dev %s master %s' % (vxlan, bridge))
+        cloud.cmd('ip link set dev %s up' % vxlan)
+
+        # Static MAC pinning avoids unknown-unicast flooding between the
+        # local VXLAN and the PE, which would duplicate frames and can loop
+        # while a MAC is unlearned.  Push all entries in one batch.
+        fdb = ['fdb replace %s dev %s master static' % (e_mac, uplink),
+               'fdb replace %s dev %s master static'
+               % (cfg.cloud_mac(network, site, host_id), port)]
+        for peer_host in cfg.host_ids():
+            if peer_host == host_id:
+                continue
+            fdb.append('fdb replace %s dev %s master static'
+                       % (cfg.cloud_mac(network, site, peer_host), vxlan))
+        for remote_site in cfg.network_sites(network):
+            if remote_site.id == site.id:
+                continue
+            for remote_host in cfg.host_ids():
+                fdb.append('fdb replace %s dev %s master static'
+                           % (cfg.cloud_mac(network, remote_site,
+                                            remote_host), uplink))
+        batch = '/tmp/fdb_%s_%d_%d.txt' % (site.abbr, host_id, network.id)
+        cloud.cmd("cat > %s <<'EOF'\n%s\nEOF\nbridge -batch %s"
+                  % (batch, '\n'.join(fdb), batch))
+
+
+def _configure_cloud_interfaces(net, cfg):
+    """Configure all cloud hosts in parallel (bridges, VXLAN and FDB)."""
+    tasks = []
     for site in cfg.sites:
         e_mac = _switch_mac(net, e_name(site), s1_name(site))
         for host_id in cfg.host_ids():
-            cloud = net.get(cloud_name(site, host_id))
-            parent = _host_intf(cloud, s1_name(site))
-            if cfg.hosts_per_site <= 1:
-                for network in cfg.networks_for_site(site):
-                    ifname = cfg.vlan_ifname(network)
-                    cloud.cmd('ip link del %s 2>/dev/null || true' % ifname)
-                    cloud.cmd('ip link add link %s name %s type vlan id %d'
-                              % (parent.name, ifname, network.vlan))
-                    cloud.cmd('ip link set dev %s address %s'
-                              % (ifname,
-                                 cfg.cloud_mac(network, site, host_id)))
-                    cloud.cmd('ip link set dev %s up' % ifname)
-                continue
-
-            if cfg.hosts_per_site > 2:
-                raise RuntimeError(
-                    '宿主机 VXLAN 目前只支持每站点 2 台主机')
-
-            underlay = cfg.underlay_ifname()
-            local_ip = cfg.underlay_address(site, host_id)
-            peer = 2 if host_id == 1 else 1
-            peer_ip = cfg.underlay_address(site, peer)
-
-            cloud.cmd('ip link del %s 2>/dev/null || true' % underlay)
-            cloud.cmd('ip link add link %s name %s type vlan id 4000'
-                      % (parent.name, underlay))
-            cloud.cmd('ip addr replace %s/24 dev %s' % (local_ip, underlay))
-            cloud.cmd('ip link set dev %s up' % underlay)
-
-            for network in cfg.networks_for_site(site):
-                uplink = cfg.vlan_ifname(network)
-                bridge = cfg.bridge_name(site, host_id, network)
-                tap = cfg.tenant_ifname(site, host_id, network)
-                port = 'bp_%s_%d_%d' % (site.abbr, host_id, network.id)
-                vxlan = cfg.vxlan_ifname(site, host_id, network)
-
-                cloud.cmd('ip link del %s 2>/dev/null || true' % bridge)
-                cloud.cmd('ip link del %s 2>/dev/null || true' % uplink)
-                cloud.cmd('ip link del %s 2>/dev/null || true' % tap)
-                cloud.cmd('ip link del %s 2>/dev/null || true' % port)
-                cloud.cmd('ip link del %s 2>/dev/null || true' % vxlan)
-
-                cloud.cmd('ip link add name %s type bridge' % bridge)
-                cloud.cmd('ip link set dev %s up' % bridge)
-
-                cloud.cmd('ip link add link %s name %s type vlan id %d'
-                          % (parent.name, uplink, network.vlan))
-                cloud.cmd('ip link set dev %s up' % uplink)
-                cloud.cmd('ip link set dev %s master %s' % (uplink, bridge))
-
-                cloud.cmd('ip link add %s type veth peer name %s'
-                          % (tap, port))
-                cloud.cmd('ip link set dev %s address %s'
-                          % (tap, cfg.cloud_mac(network, site, host_id)))
-                cloud.cmd('ip link set dev %s up' % tap)
-                cloud.cmd('ip link set dev %s master %s' % (port, bridge))
-                cloud.cmd('ip link set dev %s up' % port)
-
-                cloud.cmd('ip link add %s type vxlan id %d local %s '
-                          'remote %s dev %s dstport 4789'
-                          % (vxlan, network.id, local_ip, peer_ip, underlay))
-                cloud.cmd('ip link set dev %s master %s' % (vxlan, bridge))
-                cloud.cmd('ip link set dev %s up' % vxlan)
-
-                # Keep PE-bound unicast on the VLAN uplink; without this the
-                # first packet would also be flooded into the VXLAN.
-                cloud.cmd('bridge fdb replace %s dev %s master static'
-                          % (e_mac, uplink))
-
-                # Static MAC pinning avoids unknown-unicast flooding
-                # between the local VXLAN and the PE, which would otherwise
-                # duplicate frames and can loop while a MAC is unlearned.
-                # Entries are pushed with one ``bridge -batch`` call.
-                fdb = ['fdb replace %s dev %s master static'
-                       % (e_mac, uplink),
-                       'fdb replace %s dev %s master static'
-                       % (cfg.cloud_mac(network, site, host_id), port)]
-                for peer_host in cfg.host_ids():
-                    if peer_host == host_id:
-                        continue
-                    fdb.append('fdb replace %s dev %s master static'
-                               % (cfg.cloud_mac(network, site, peer_host),
-                                  vxlan))
-                for remote_site in cfg.network_sites(network):
-                    if remote_site.id == site.id:
-                        continue
-                    for remote_host in cfg.host_ids():
-                        fdb.append(
-                            'fdb replace %s dev %s master static'
-                            % (cfg.cloud_mac(network, remote_site,
-                                             remote_host), uplink))
-                batch = '/tmp/fdb_%s_%d_%d.txt' % (
-                    site.abbr, host_id, network.id)
-                cloud.cmd("cat > %s <<'EOF'\n%s\nEOF\nbridge -batch %s"
-                          % (batch, '\n'.join(fdb), batch))
+            tasks.append((site, host_id, e_mac))
+    workers = min(MAX_WORKERS, len(tasks)) or 1
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_configure_cloud_host, net, cfg, site,
+                               host_id, e_mac)
+                   for site, host_id, e_mac in tasks]
+        for future in futures:
+            future.result()
 
 
 def _configure_addresses(net, cfg):
@@ -593,18 +586,6 @@ def _configure_routers(net, cfg, macs):
                             'ip -6 route replace default table %d via %s '
                             'dev %s onlink' % (table_id, gateway, ifname),
                             'L2 默认路由')
-                    for remote_site in cfg.network_sites(network):
-                        if remote_site.id == site.id:
-                            continue
-                        for remote_host in cfg.host_ids():
-                            remote_addr = cfg.cloud_address(
-                                network, remote_site, remote_host)
-                            remote_mac = cfg.cloud_mac(
-                                network, remote_site, remote_host)
-                            cloud.cmd(
-                                'ip -6 neigh replace %s lladdr %s dev %s '
-                                'nud permanent'
-                                % (remote_addr, remote_mac, ifname))
             if l3_interfaces:
                 network, gateway, ifname = l3_interfaces[0]
                 _run_ip(cloud,
@@ -662,6 +643,7 @@ def _configure_public(net, cfg):
 
 def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
     names = runtime_names(json_path or cfg.p4_json)
+    print('*** 配置宿主机桥/VXLAN')
     _configure_cloud_interfaces(net, cfg)
     switch_ports = _port_maps(net, cfg)
     macs = _site_macs(net, cfg)
@@ -674,7 +656,10 @@ def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
         raise RuntimeError('EVPN 路由校验失败: %s' % '; '.join(errors))
     net.evpn_routes = evpn_routes
 
+    print('*** 下发 P4 表项')
     _install_switch_tables(net, cfg, names, switch_ports, macs,
                            evpn_routes)
+    print('*** 配置路由器和云主机')
     _configure_routers(net, cfg, macs)
+    print('*** 配置公网边界')
     _configure_public(net, cfg)
