@@ -4,6 +4,7 @@ PARALLEL_P4INFO   = build/parallel_vpn.p4info.txt
 
 .PHONY: all clean parallel-p4 parallel-dump parallel-evpn-dump \
         parallel-dump-min parallel-evpn-dump-min test test-evpn test-ovs \
+        test-verify verify-dry verify-min verify-full render-config \
         parallel-run parallel-run-no-cli parallel-run-min \
         parallel-run-no-cli-min parallel-stop
 
@@ -33,13 +34,33 @@ parallel-dump-min:
 parallel-evpn-dump-min:
 	python3 parallel_evpn.py --config configs/parallel-min.json --dump --validate
 
-test: test-evpn test-ovs
+test: test-evpn test-ovs test-verify
 
 test-evpn:
 	python3 -m unittest tests.test_evpn
 
 test-ovs:
 	python3 -m unittest tests.test_ovs
+
+test-verify:
+	python3 -m unittest tests.test_verify
+
+# 功能验收：不需要 root，只校验用例与配置
+verify-dry:
+	python3 verify/runner.py --config configs/parallel-min.json --dry-run
+
+# 功能验收：4 站点最小拓扑
+verify-min: parallel-p4
+	sudo python3 verify/runner.py --config configs/parallel-min.json
+
+# 功能验收：41 站点全量
+verify-full: parallel-p4
+	sudo python3 verify/runner.py --config configs/parallel.json
+
+# 重新生成真实设备配置基线
+render-config:
+	python3 tools/render_config.py --config configs/parallel-min.json \
+		--target huawei --out configs/expected/huawei-min.txt
 
 parallel-run: parallel-p4
 	sudo python3 parallel_net.py

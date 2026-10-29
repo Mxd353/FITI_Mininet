@@ -1,0 +1,86 @@
+meta:
+  name: reachability
+  description: 正向连通性：同网络站点互通、BUM、公网
+
+cases:
+  - name: l3vpn-net1-bj-sh
+    tags: [core, l3]
+    requires_sites: [sh]
+    steps:
+      - type: ping
+        node: cl_bj
+        iface: v3501
+        target: 240a:a806:1:2::10
+        expect: pass
+
+  - name: l3vpn-net1-bj-tjn
+    tags: [core, l3]
+    requires_sites: [tjn]
+    steps:
+      - type: ping
+        node: cl_bj
+        iface: v3501
+        target: 240a:a806:1:14::10
+        expect: pass
+
+  - name: l3vpn-net1-bj-jnn
+    tags: [core, l3]
+    requires_sites: [jnn]
+    steps:
+      - type: ping
+        node: cl_bj
+        iface: v3501
+        target: 240a:a806:1:23::10
+        expect: pass
+
+  - name: l3vpn-net2-bj-sh
+    tags: [core, l3]
+    requires_sites: [sh]
+    steps:
+      - type: ping
+        node: cl_bj
+        iface: v3502
+        target: 240a:a806:2:2::10
+        expect: pass
+
+  - name: l2vpn-net3-bj-sh
+    tags: [core, l2]
+    requires_sites: [sh]
+    steps:
+      - type: ping
+        node: cl_bj
+        iface: v3503
+        target: 240a:a806:3:1::11
+        expect: pass
+
+  - name: l2vpn-net3-bj-tjn
+    tags: [core, l2]
+    requires_sites: [tjn]
+    steps:
+      - type: ping
+        node: cl_bj
+        iface: v3503
+        target: 240a:a806:3:1::1d
+        expect: pass
+
+  - name: bum-net3
+    tags: [core, l2]
+    requires_sites: [sh]
+    steps:
+      - type: ping
+        node: cl_bj
+        iface: v3503
+        target: ff02::1
+        count: 3
+        min_received: 1
+        max_loss: 100
+        expect: pass
+
+  - name: public-fix
+    tags: [core, public]
+    steps:
+      - type: ping
+        node: cl_bj
+        iface: v3501
+        target: 2001:255:0:100::2000
+        expect: pass

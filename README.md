@@ -365,12 +365,49 @@ make parallel-evpn-dump       # 41 站点路由模型
 make parallel-evpn-dump-min   # 4 站点路由模型
 make test-evpn                # EVPN 路由模型测试
 make test-ovs                 # OVS 接入交换机配置测试
+make test-verify              # 验收用例和配置渲染测试
 make test                     # 全部单元测试
+
+make verify-dry               # 免 root，校验用例和配置
+make verify-min               # 4 站点功能验收
+make verify-full              # 41 站点功能验收
+make render-config            # 重新生成真实设备配置基线
 
 make parallel-run             # 41 站点，41 台 BMv2 + 82 台 OVS
 make parallel-run-min         # 4 站点，4 台 BMv2 + 8 台 OVS
 make parallel-run-no-cli      # 41 站点后台模式
 make parallel-stop            # 清理
+```
+
+## 功能验收
+
+接入真实平台前的功能验证，判定 pass / fail，不做性能测量：
+
+```bash
+make parallel-stop
+make verify-dry      # 免 root
+make verify-min      # 4 站点，25 条用例
+make verify-full     # 41 站点
+```
+
+覆盖：
+
+- 同网络互通、跨网络隔离；
+- S1 放行、S2 拒绝并行 VLAN；
+- P4 表项（`local_sid`、`l3_fib`、`l2_tunnel`）；
+- 云主机策略路由和 C 路由器 underlay 路由；
+- EVPN agent 动态增删路由；
+- 链路 down/up（默认跳过，`--tag faults`）。
+
+报告写到 `runs/<时间戳>/`，失败用例会附带表项和路由 dump。
+详见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
+
+配置同源：仿真表项和真实设备 CLI 都由 `configs/parallel*.json` 生成。
+
+```bash
+python3 tools/render_config.py --config configs/parallel-min.json --target huawei
+python3 tools/render_config.py --config configs/parallel-min.json --target sim
+python3 tools/render_config.py --config configs/parallel-min.json --target ovs
 ```
 
 ## 目录结构
@@ -396,10 +433,22 @@ parallel/                   并行网络实现
 configs/
 ├── fiti.json               FITI 实际拓扑数据（41 节点/43 链路）
 ├── parallel.json           41 站点配置
-└── parallel-min.json       4 站点验证配置
+├── parallel-min.json       4 站点验证配置
+└── expected/
+    └── huawei-min.txt      真实设备配置基线（golden）
+
+verify/                     功能验收
+├── runner.py               用例执行器
+├── spec.py                 用例加载与校验
+├── report.py               报告与 JUnit
+└── cases/                  验收用例
+
+tools/
+└── render_config.py        仿真/设备/OVS 配置渲染
 
 docs/
 ├── PARALLEL_NETWORK_DESIGN.md
+├── VERIFICATION.md
 └── 中关村主干网并行网络设计方案.pdf
 
 p4src/parallel_vpn.p4       VLAN + L3/L2VPN + SRv6 + BUM

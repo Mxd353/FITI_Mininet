@@ -36,7 +36,7 @@ def _peer_intf(intf):
     return link.intf2 if link.intf1 is intf else link.intf1
 
 
-def _intf_to(node, peer_name):
+def intf_to(node, peer_name):
     for intf in node.intfs.values():
         peer = _peer_intf(intf)
         if peer is not None and peer.node.name == peer_name:
@@ -98,14 +98,14 @@ def configure_ovs_switches(net, cfg):
         s1 = net.get(s1_name(site))
         s2 = net.get(s2_name(site))
         cloud = cloud_name(site)
-        uplink_s2 = _intf_to(s2, a_name(site))
+        uplink_s2 = intf_to(s2, a_name(site))
 
         ensure_normal_flow(s1)
         ensure_normal_flow(s2)
 
-        set_trunk(s1, _intf_to(s1, e_name(site)), ALL_VLANS)
-        set_trunk(s1, _intf_to(s1, cloud), ALL_VLANS)
-        set_trunk(s2, _intf_to(s2, cloud), ALL_VLANS)
+        set_trunk(s1, intf_to(s1, e_name(site)), ALL_VLANS)
+        set_trunk(s1, intf_to(s1, cloud), ALL_VLANS)
+        set_trunk(s2, intf_to(s2, cloud), ALL_VLANS)
         set_trunk(s2, uplink_s2, NON_PARALLEL_VLANS)
 
         # S2's uplink is the only restrictive policy in the design; make a

@@ -1,0 +1,59 @@
+meta:
+  name: vlan-policy
+  description: S1 上行放行并行 VLAN，S2 上行拒绝并行 VLAN
+
+cases:
+  - name: vlan-policy-bj
+    tags: [core, vlan]
+    steps:
+      - type: ovs_trunks
+        switch: S1_bj
+        peer: E_bj
+        contains: [3501, 3502, 3503, 3504]
+      - type: ovs_trunks
+        switch: S2_bj
+        peer: A_bj
+        contains: [3500, 3900, 3901]
+        not_contains: [3501, 3502, 3503, 3504]
+
+  - name: vlan-policy-sh
+    tags: [core, vlan]
+    requires_sites: [sh]
+    steps:
+      - type: ovs_trunks
+        switch: S1_sh
+        peer: E_sh
+        contains: [3501, 3502, 3503, 3504]
+      - type: ovs_trunks
+        switch: S2_sh
+        peer: A_sh
+        contains: [3500, 3900, 3901]
+        not_contains: [3501, 3502, 3503, 3504]
+
+  - name: vlan-policy-tjn
+    tags: [core, vlan]
+    requires_sites: [tjn]
+    steps:
+      - type: ovs_trunks
+        switch: S1_tjn
+        peer: E_tjn
+        contains: [3501, 3502, 3503, 3504]
+      - type: ovs_trunks
+        switch: S2_tjn
+        peer: A_tjn
+        contains: [3500, 3900, 3901]
+        not_contains: [3501, 3502, 3503, 3504]
+
+  - name: vlan-policy-jnn
+    tags: [core, vlan]
+    requires_sites: [jnn]
+    steps:
+      - type: ovs_trunks
+        switch: S1_jnn
+        peer: E_jnn
+        contains: [3501, 3502, 3503, 3504]
+      - type: ovs_trunks
+        switch: S2_jnn
+        peer: A_jnn
+        contains: [3500, 3900, 3901]
+        not_contains: [3501, 3502, 3503, 3504]

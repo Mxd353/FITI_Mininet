@@ -5,3 +5,5 @@ __pycache__/
 build/
 pcap/
 *.pcap
+# 功能验收输出
+runs/

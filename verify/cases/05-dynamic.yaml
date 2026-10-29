@@ -1,0 +1,76 @@
+meta:
+  name: dynamic-routes
+  description: EVPN agent 动态增删路由
+
+cases:
+  - name: evpn-l3-add-withdraw
+    tags: [core, dynamic]
+    requires_sites: [sh]
+    steps:
+      - type: evpn_advertise
+        route:
+          type: ip-prefix
+          rd: "9425:1"
+          rt: ["9425:1"]
+          prefix: "240a:a806:1:2:abcd::/80"
+          vni: 1
+          sid: "fd00:0:2:1::1ff"
+          origin: sh
+          next_hop: "fd00:0:2:1::1ff"
+      - type: p4_entry
+        switch: E_bj
+        table: l3_fib
+        keys: [1, "240a:a806:1:2:abcd::/80"]
+        present: true
+      - type: evpn_withdraw
+        route:
+          type: ip-prefix
+          rd: "9425:1"
+          rt: ["9425:1"]
+          prefix: "240a:a806:1:2:abcd::/80"
+          vni: 1
+          sid: "fd00:0:2:1::1ff"
+          origin: sh
+          next_hop: "fd00:0:2:1::1ff"
+      - type: p4_entry
+        switch: E_bj
+        table: l3_fib
+        keys: [1, "240a:a806:1:2:abcd::/80"]
+        present: false
+
+  - name: evpn-l2-add-withdraw
+    tags: [core, dynamic]
+    requires_sites: [sh]
+    steps:
+      - type: evpn_advertise
+        route:
+          type: mac-ip
+          rd: "9425:3"
+          rt: ["9425:3"]
+          mac: "02:00:02:03:00:aa"
+          ip: "240a:a806:3:1::99"
+          vni: 3
+          sid: "fd00:0:2:1::2ff"
+          origin: sh
+          next_hop: "fd00:0:2:1::2ff"
+      - type: p4_entry
+        switch: E_bj
+        table: l2_tunnel
+        keys: [3503, "02:00:02:03:00:aa"]
+        present: true
+      - type: evpn_withdraw
+        route:
+          type: mac-ip
+          rd: "9425:3"
+          rt: ["9425:3"]
+          mac: "02:00:02:03:00:aa"
+          ip: "240a:a806:3:1::99"
+          vni: 3
+          sid: "fd00:0:2:1::2ff"
+          origin: sh
+          next_hop: "fd00:0:2:1::2ff"
+      - type: p4_entry
+        switch: E_bj
+        table: l2_tunnel
+        keys: [3503, "02:00:02:03:00:aa"]
+        present: false

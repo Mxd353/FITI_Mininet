@@ -1,0 +1,77 @@
+meta:
+  name: control-plane
+  description: 静态控制面表项与 Linux 路由
+
+cases:
+  - name: e-bj-local-sid-l3
+    tags: [core, control]
+    steps:
+      - type: p4_entry
+        switch: E_bj
+        table: local_sid
+        keys: ["fd00:0:1:1::101/128"]
+        present: true
+      - type: p4_entry
+        switch: E_bj
+        table: local_sid
+        keys: ["fd00:0:1:1::102/128"]
+        present: true
+
+  - name: e-bj-local-sid-l2
+    tags: [core, control]
+    steps:
+      - type: p4_entry
+        switch: E_bj
+        table: local_sid
+        keys: ["fd00:0:1:1::203/128"]
+        present: true
+      - type: p4_entry
+        switch: E_bj
+        table: local_sid
+        keys: ["fd00:0:1:1::204/128"]
+        present: true
+
+  - name: e-bj-l3-route-to-sh
+    tags: [core, control, l3]
+    requires_sites: [sh]
+    steps:
+      - type: p4_entry
+        switch: E_bj
+        table: l3_fib
+        keys: [1, "240a:a806:1:2::/64"]
+        present: true
+
+  - name: e-bj-l2-tunnel-to-sh
+    tags: [core, control, l2]
+    requires_sites: [sh]
+    steps:
+      - type: p4_entry
+        switch: E_bj
+        table: l2_tunnel
+        keys: [3503, "02:00:02:03:00:01"]
+        present: true
+
+  - name: c-bj-underlay-route
+    tags: [core, control]
+    requires_sites: [sh]
+    steps:
+      - type: linux_route
+        node: C_bj
+        match: "fd00:0:2::/48"
+        present: true
+
+  - name: cl-bj-policy-rule
+    tags: [core, control]
+    steps:
+      - type: exec
+        node: cl_bj
+        command: ip -6 rule show
+        expect_contains: "20001"
+
+  - name: cl-bj-default-route
+    tags: [core, control]
+    steps:
+      - type: exec
+        node: cl_bj
+        command: ip -6 route show table 20001
+        expect_contains: "default"

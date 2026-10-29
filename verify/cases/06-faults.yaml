@@ -1,0 +1,35 @@
+meta:
+  name: faults
+  description: 链路故障用例，默认不执行（加 --tag faults 或 --all）
+
+cases:
+  - name: link-down-bj-tjn
+    tags: [faults]
+    requires_sites: [tjn]
+    description: 断开北京-天津链路后应不通，恢复后应重新可达
+    steps:
+      - type: link
+        node: C_bj
+        peer: C_tjn
+        action: down
+      - type: ping
+        node: cl_bj
+        iface: v3501
+        target: 240a:a806:1:14::10
+        expect: fail
+      - type: link
+        node: C_bj
+        peer: C_tjn
+        action: up
+      - type: sleep
+        seconds: 2
+      - type: ping
+        node: cl_bj
+        iface: v3501
+        target: 240a:a806:1:14::10
+        expect: pass
+    teardown:
+      - type: link
+        node: C_bj
+        peer: C_tjn
+        action: up
