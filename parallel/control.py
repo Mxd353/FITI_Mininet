@@ -456,6 +456,19 @@ def _configure_routers(net, cfg, macs):
                 cloud.cmd('ip -6 rule add from %s table %d priority %d'
                           % (cfg.cloud_address(network, site), table_id,
                              10000 + network.id))
+                # A default route keeps off-subnet traffic inside this
+                # slice.  Without it the from-table would miss and Linux
+                # would fall through to the main table, where the kernel's
+                # connected routes for the other slices would inject the
+                # packet into the wrong VSI.
+                gateway = cfg.central_address(network, site)
+                cloud.cmd('ip -6 neigh replace %s lladdr %s dev %s '
+                          'nud permanent'
+                          % (gateway, macs[site.abbr]['e_s1'], ifname))
+                _run_ip(cloud,
+                        'ip -6 route replace default table %d via %s dev %s '
+                        'onlink' % (table_id, gateway, ifname),
+                        'L2 默认路由')
                 for remote_site in cfg.network_sites(network):
                     if remote_site.id == site.id:
                         continue

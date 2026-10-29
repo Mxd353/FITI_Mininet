@@ -7,7 +7,7 @@
 ```bash
 make parallel-stop      # 清理旧实例
 make verify-dry         # 免 root，只校验用例与配置
-make verify-min         # 4 站点，25 条用例
+make verify-min         # 4 站点，26 条用例
 make verify-full        # 41 站点
 ```
 
@@ -22,15 +22,15 @@ runs/<时间戳>/evidence/<用例>.txt
 运行时会逐条打印进度，跑完给汇总：
 
 ```text
-==> 功能验收：25 条用例，配置 configs/parallel-min.json，标签 全部
-[ 1/25] l3vpn-net1-bj-sh         PASS    2.1s
-[ 2/25] l3vpn-net1-bj-tjn        PASS    2.0s
-[ 3/25] l3vpn-net1-bj-jnn        PASS    2.0s
-[ 4/25] iso-l2-net3-to-net4      FAIL    4.0s
+==> 功能验收：26 条用例，配置 configs/parallel-min.json，标签 全部
+[ 1/26] l3vpn-net1-bj-sh         PASS    2.1s
+[ 2/26] l3vpn-net1-bj-tjn        PASS    2.0s
+[ 3/26] l3vpn-net1-bj-jnn        PASS    2.0s
+[ 4/26] iso-l2-net3-to-net4      FAIL    4.0s
         期望 100% 丢包，实际 0%（收到 3）
-[ 5/25] vlan-policy-bj           SKIP    0.0s  缺少站点: gz
+[ 5/26] vlan-policy-bj           SKIP    0.0s  缺少站点: gz
 
-通过 23，失败 1，跳过 1，共 25（用例耗时 52.3s）
+通过 24，失败 1，跳过 1，共 26（用例耗时 52.3s）
 最慢用例 4.0s
 报告: runs/20261029-160000
 ```
@@ -63,7 +63,7 @@ sudo python3 verify/runner.py --config configs/parallel-min.json --tag faults
 | `01-reachability.yaml` | L3VPN/L2VPN 同网络互通、BUM、公网 | 8 |
 | `02-isolation.yaml` | 跨网络必须 100% 丢包 | 4 |
 | `03-vlan.yaml` | S1 放行、S2 拒绝并行 VLAN | 4 |
-| `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 7 |
+| `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 8 |
 | `05-dynamic.yaml` | EVPN agent 动态增删路由 | 2 |
 | `06-faults.yaml` | 链路 down/up（默认跳过） | 1 |
 
@@ -109,14 +109,19 @@ cases:
 ```text
 L3 之间    报文实际发出，在 E 的 VRF 查不到对端前缀被丢弃
            iso-l3-net1-to-net2 / iso-l3-net1-to-l2 / iso-l3-net2-to-net1
-L2 之间    主机没有 VSI 内的跨切片路由，回落到主表默认路由后
-           在 E 的 VRF 被丢弃
+L2 之间    每个 L2 表都有指向本网络互联地址的默认路由，跨切片流量
+           留在自己的 VSI 内，由 E 在 VSI 内泛洪，到不了其它切片
            iso-l2-net3-to-net4
 ```
 
 隔离用例统一用**源地址**绑定（`-I <源地址>`），而不是网卡名：网卡名会让内核
 先按目的前缀选表，可能和设备绑定冲突而提前在主机侧失败；源地址能保证
 `from` 规则命中，报文真正发到 E。
+
+L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续匹配后面的规则，
+最终落到主表；而主表里有内核为所有 VLAN 子接口自动生成的直连路由，
+会把报文从**错误切片的子接口**发出去，造成跨切片注入。默认路由指向本网络的
+互联地址（`240a:a806:{网络}:{100+站点}::1`），报文就留在自己的 VSI 内。
 
 
 ## 需求追溯矩阵

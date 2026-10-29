@@ -386,7 +386,7 @@ make parallel-stop            # 清理
 ```bash
 make parallel-stop
 make verify-dry      # 免 root
-make verify-min      # 4 站点，25 条用例
+make verify-min      # 4 站点，26 条用例
 make verify-full     # 41 站点
 ```
 

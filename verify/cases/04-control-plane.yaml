@@ -68,6 +68,18 @@ cases:
         command: ip -6 rule show
         expect_contains: "20001"
 
+  - name: cl-bj-l2-default-route
+    tags: [core, control, l2]
+    steps:
+      - type: exec
+        node: cl_bj
+        command: ip -6 route show table 30003
+        expect_contains: default
+      - type: exec
+        node: cl_bj
+        command: ip -6 route show table 30004
+        expect_contains: default
+
   - name: cl-bj-default-route
     tags: [core, control]
     steps:
