@@ -249,7 +249,7 @@ class RenderTest(unittest.TestCase):
         rows = render_sim(self.cfg).strip().splitlines()
         self.assertEqual(len(rows), 1 + len(self.cfg.sites) * 4)
         self.assertIn('3501', rows[1])
-        self.assertIn('fd00:0:1:1::101', rows[1])
+        self.assertIn('fd00:0:1:1::1:1', rows[1])
 
     def test_ovs_lines(self):
         lines = render_ovs(self.cfg).strip().splitlines()

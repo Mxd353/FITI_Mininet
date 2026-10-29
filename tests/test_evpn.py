@@ -4,7 +4,9 @@
 
 import unittest
 
-from parallel.config import load_config
+import ipaddress
+
+from parallel.config import Network, load_config
 from parallel.evpn import (RouteTable, build_evpn_routes,
                            validate_evpn_routes)
 
@@ -31,6 +33,26 @@ class EvpnRouteModelTest(unittest.TestCase):
         self.assertNotEqual(
             self.cfg.core_address(self.cfg.site('bj'), self.cfg.site('tjn')),
             self.cfg.core_address(self.cfg.site('tjn'), self.cfg.site('bj')))
+
+    def test_sid_and_mac_unique_across_400_networks(self):
+        site = self.cfg.site('bj')
+        locator = ipaddress.IPv6Network('fd00:0:1::/48')
+        sids = set()
+        macs = set()
+        for network_id in (1, 255, 256, 257, 400):
+            for vpn in ('l3', 'l2'):
+                network = Network(id=network_id, vpn=vpn,
+                                  vlan=network_id + 3500, sites=('bj',))
+                sid = (self.cfg.srv6_sid(network, site) if vpn == 'l3'
+                       else self.cfg.l2_sid(network, site))
+                self.assertNotIn(sid, sids)
+                self.assertIn(ipaddress.IPv6Address(sid), locator)
+                sids.add(sid)
+            mac = self.cfg.cloud_mac(network, site)
+            self.assertNotIn(mac, macs)
+            macs.add(mac)
+        self.assertEqual(len(sids), 10)
+        self.assertEqual(len(macs), 5)
 
     def test_l2_cloud_addresses_are_unique(self):
         for network in self.cfg.l2_networks():

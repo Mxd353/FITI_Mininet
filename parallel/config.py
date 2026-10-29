@@ -91,19 +91,31 @@ class ParallelConfig:
         return 'v%d' % network.vlan
 
     def cloud_mac(self, network: Network, site: Site) -> str:
-        """Deterministic per-slice MAC on the single cloud host."""
-        return '02:00:%02x:%02x:00:01' % (int(site.id) & 0xff,
-                                          int(network.id) & 0xff)
+        """Deterministic per-slice MAC on the single cloud host.
+
+        The 16-bit site and network IDs are stored in separate bytes, so
+        network 1 and 257 (or 256 and 0) cannot collide.
+        """
+        site_id = int(site.id)
+        network_id = int(network.id)
+        return '02:%02x:%02x:%02x:%02x:01' % (
+            (site_id >> 8) & 0xff, site_id & 0xff,
+            (network_id >> 8) & 0xff, network_id & 0xff)
 
     def srv6_sid(self, network: Network, site: Site) -> str:
-        """Per-site, per-network SRv6 SID used by the static L3VPN PE."""
+        """Per-site, per-network SRv6 SID used by the static L3VPN PE.
+
+        The SID lives in the site locator ``fd00:0:{site}:1::/64`` and uses
+        two 16-bit words: ``::1:{network}`` for L3VPN.  The type word keeps
+        L3 and L2 SIDs apart for the full 1..400 range (and beyond).
+        """
         return str(ipaddress.IPv6Address(
-            'fd00:0:%d:1::%x' % (site.id, 0x100 + network.id)))
+            'fd00:0:%d:1::1:%x' % (site.id, network.id)))
 
     def l2_sid(self, network: Network, site: Site) -> str:
-        """Per-site, per-network SRv6 SID used by L2VPN."""
+        """Per-site, per-network SRv6 SID used by L2VPN (``::2:{network}``)."""
         return str(ipaddress.IPv6Address(
-            'fd00:0:%d:1::%x' % (site.id, 0x200 + network.id)))
+            'fd00:0:%d:1::2:%x' % (site.id, network.id)))
 
     def interconnect_network(self, network: Network,
                              site: Site) -> ipaddress.IPv6Network:

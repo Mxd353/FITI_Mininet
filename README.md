@@ -282,9 +282,9 @@ cat >/tmp/evpn-route.json <<'JSON'
   "rt": ["9425:1"],
   "prefix": "240a:a806:1:5:abcd::/80",
   "vni": 1,
-  "sid": "fd00:0:5:1::101",
+  "sid": "fd00:0:5:1::1:1",
   "origin": "xa",
-  "next_hop": "fd00:0:5:1::101"
+  "next_hop": "fd00:0:5:1::1:1"
 }
 JSON
 

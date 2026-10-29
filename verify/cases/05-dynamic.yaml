@@ -14,9 +14,9 @@ cases:
           rt: ["9425:1"]
           prefix: "240a:a806:1:2:abcd::/80"
           vni: 1
-          sid: "fd00:0:2:1::1ff"
+          sid: "fd00:0:2:1::1:1ff"
           origin: sh
-          next_hop: "fd00:0:2:1::1ff"
+          next_hop: "fd00:0:2:1::1:1ff"
       - type: p4_entry
         switch: E_bj
         table: l3_fib
@@ -29,9 +29,9 @@ cases:
           rt: ["9425:1"]
           prefix: "240a:a806:1:2:abcd::/80"
           vni: 1
-          sid: "fd00:0:2:1::1ff"
+          sid: "fd00:0:2:1::1:1ff"
           origin: sh
-          next_hop: "fd00:0:2:1::1ff"
+          next_hop: "fd00:0:2:1::1:1ff"
       - type: p4_entry
         switch: E_bj
         table: l3_fib
@@ -47,30 +47,30 @@ cases:
           type: mac-ip
           rd: "9425:3"
           rt: ["9425:3"]
-          mac: "02:00:02:03:00:aa"
+          mac: "02:00:02:00:03:aa"
           ip: "240a:a806:3:1::99"
           vni: 3
-          sid: "fd00:0:2:1::2ff"
+          sid: "fd00:0:2:1::2:2ff"
           origin: sh
-          next_hop: "fd00:0:2:1::2ff"
+          next_hop: "fd00:0:2:1::2:2ff"
       - type: p4_entry
         switch: E_bj
         table: l2_tunnel
-        keys: [3503, "02:00:02:03:00:aa"]
+        keys: [3503, "02:00:02:00:03:aa"]
         present: true
       - type: evpn_withdraw
         route:
           type: mac-ip
           rd: "9425:3"
           rt: ["9425:3"]
-          mac: "02:00:02:03:00:aa"
+          mac: "02:00:02:00:03:aa"
           ip: "240a:a806:3:1::99"
           vni: 3
-          sid: "fd00:0:2:1::2ff"
+          sid: "fd00:0:2:1::2:2ff"
           origin: sh
-          next_hop: "fd00:0:2:1::2ff"
+          next_hop: "fd00:0:2:1::2:2ff"
       - type: p4_entry
         switch: E_bj
         table: l2_tunnel
-        keys: [3503, "02:00:02:03:00:aa"]
+        keys: [3503, "02:00:02:00:03:aa"]
         present: false

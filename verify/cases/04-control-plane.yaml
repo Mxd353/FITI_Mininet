@@ -9,12 +9,12 @@ cases:
       - type: p4_entry
         switch: E_bj
         table: local_sid
-        keys: ["fd00:0:1:1::101/128"]
+        keys: ["fd00:0:1:1::1:1/128"]
         present: true
       - type: p4_entry
         switch: E_bj
         table: local_sid
-        keys: ["fd00:0:1:1::102/128"]
+        keys: ["fd00:0:1:1::1:2/128"]
         present: true
 
   - name: e-bj-local-sid-l2
@@ -23,12 +23,12 @@ cases:
       - type: p4_entry
         switch: E_bj
         table: local_sid
-        keys: ["fd00:0:1:1::203/128"]
+        keys: ["fd00:0:1:1::2:3/128"]
         present: true
       - type: p4_entry
         switch: E_bj
         table: local_sid
-        keys: ["fd00:0:1:1::204/128"]
+        keys: ["fd00:0:1:1::2:4/128"]
         present: true
 
   - name: e-bj-l3-route-to-sh
@@ -48,7 +48,7 @@ cases:
       - type: p4_entry
         switch: E_bj
         table: l2_tunnel
-        keys: [3503, "02:00:02:03:00:01"]
+        keys: [3503, "02:00:02:00:03:01"]
         present: true
 
   - name: c-bj-underlay-route
