@@ -13,8 +13,8 @@ cases:
       - type: ovs_trunks
         switch: S2_bj
         peer: A_bj
-        contains: [3500, 3900, 3901]
-        not_contains: [3501, 3502, 3503, 3504]
+        contains: [3500, 3901]
+        not_contains: [3501, 3502, 3503, 3504, 3900]
 
   - name: vlan-policy-sh
     tags: [core, vlan]
@@ -27,8 +27,8 @@ cases:
       - type: ovs_trunks
         switch: S2_sh
         peer: A_sh
-        contains: [3500, 3900, 3901]
-        not_contains: [3501, 3502, 3503, 3504]
+        contains: [3500, 3901]
+        not_contains: [3501, 3502, 3503, 3504, 3900]
 
   - name: vlan-policy-tjn
     tags: [core, vlan]
@@ -41,8 +41,8 @@ cases:
       - type: ovs_trunks
         switch: S2_tjn
         peer: A_tjn
-        contains: [3500, 3900, 3901]
-        not_contains: [3501, 3502, 3503, 3504]
+        contains: [3500, 3901]
+        not_contains: [3501, 3502, 3503, 3504, 3900]
 
   - name: vlan-policy-jnn
     tags: [core, vlan]
@@ -55,5 +55,5 @@ cases:
       - type: ovs_trunks
         switch: S2_jnn
         peer: A_jnn
-        contains: [3500, 3900, 3901]
-        not_contains: [3501, 3502, 3503, 3504]
+        contains: [3500, 3901]
+        not_contains: [3501, 3502, 3503, 3504, 3900]

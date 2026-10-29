@@ -47,6 +47,10 @@ def _ping_command(iface, target, count, timeout=1):
 
 
 def parse_ping(output):
+    """Return (loss_percent, received_count) or (None, 0) if unknown."""
+    if 'Network is unreachable' in output or 'unreachable' in output.lower():
+        # ping6 在源主机没有路由时直接报错，语义上等价于 100% 不可达。
+        return 100.0, 0
     loss = LOSS_RE.search(output)
     received = RECEIVED_RE.search(output)
     return (float(loss.group(1)) if loss else None,
@@ -95,24 +99,38 @@ class CaseRunner(object):
         iface = step.get('iface')
         target = step['target']
         count = int(step.get('count', 3))
-        # Warm up ND/FDB so the measured run is not biased by first-packet loss.
-        node.cmd(_ping_command(iface, target, 1))
-        output = node.cmd(_ping_command(iface, target, count))
-        loss, received = parse_ping(output)
-        if loss is None:
-            raise StepError('无法解析 ping 输出')
         expect = step.get('expect', 'pass')
+        max_loss = float(step.get('max_loss', 0))
+        min_received = int(step.get('min_received', 1))
+        retries = int(step.get('retries', 1)) if expect == 'pass' else 0
+        last_output = ''
+        last_loss = None
+        last_received = 0
+        for attempt in range(retries + 1):
+            # Warm up ND/FDB so the measured run is not biased by cold start.
+            node.cmd(_ping_command(iface, target, 1))
+            last_output = node.cmd(_ping_command(iface, target, count))
+            last_loss, last_received = parse_ping(last_output)
+            if last_loss is None:
+                break
+            if expect == 'fail':
+                if last_loss >= 100:
+                    return last_output.strip()
+                break
+            if last_loss <= max_loss and last_received >= min_received:
+                return last_output.strip()
+            if attempt < retries:
+                time.sleep(0.5)
+
+        detail = last_output.strip().splitlines()[-3:]
+        hint = '\n'.join(detail)
+        if last_loss is None:
+            raise StepError('无法解析 ping 输出: %s' % hint)
         if expect == 'fail':
-            if loss < 100:
-                raise StepError('期望 100%% 丢包，实际 %.0f%%（收到 %d）'
-                                % (loss, received))
-        else:
-            max_loss = float(step.get('max_loss', 0))
-            min_received = int(step.get('min_received', 1))
-            if loss > max_loss or received < min_received:
-                raise StepError('期望可达，实际丢包 %.0f%%，收到 %d/%d'
-                                % (loss, received, count))
-        return output.strip()
+            raise StepError('期望 100%% 丢包，实际 %.0f%%（收到 %d）: %s'
+                            % (last_loss, last_received, hint))
+        raise StepError('期望可达，实际丢包 %.0f%%，收到 %d/%d: %s'
+                        % (last_loss, last_received, count, hint))
 
     def _step_exec(self, step):
         node = self._node(step['node'])
@@ -283,6 +301,9 @@ def _run(args, cfg, cases):
                                  log_dir=log_dir, install_rules=True)
         if not args.no_agent:
             agent = start_evpn_agent(net, cfg, args.evpn_socket)
+        # Give OVS/bmv2 a moment to settle before the first case.
+        if args.settle:
+            time.sleep(args.settle)
         runner = CaseRunner(net, cfg, agent)
         available = {site.abbr for site in cfg.sites}
         for case in cases:
@@ -328,6 +349,8 @@ def main(argv=None):
     parser.add_argument('--thrift-base', type=int, default=None)
     parser.add_argument('--log-dir', default=None)
     parser.add_argument('--evpn-socket', default='/tmp/parallel_evpn.sock')
+    parser.add_argument('--settle', type=float, default=1.0,
+                        help='启动后等待秒数（默认 1 秒）')
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)

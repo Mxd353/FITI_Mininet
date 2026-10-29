@@ -52,9 +52,13 @@ def print_summary(results, stream=print) -> None:
         else:
             stream('[FAIL] %-34s %s' % (result.name, result.reason))
             for detail in result.details:
-                if detail.status == 'fail':
-                    for line in (detail.output or '').strip().splitlines()[-5:]:
-                        stream('       %s' % line)
+                if detail.status != 'fail':
+                    continue
+                output = (detail.output or '').strip()
+                if output and output == (detail.message or '').strip():
+                    continue
+                for line in output.splitlines()[-5:]:
+                    stream('       %s' % line)
     passed = sum(1 for item in results if item.status == 'pass')
     failed = sum(1 for item in results if item.status == 'fail')
     skipped = sum(1 for item in results if item.status == 'skip')

@@ -7,6 +7,10 @@ cases:
     tags: [core, isolation]
     requires_sites: [sh]
     steps:
+      - type: exec
+        node: cl_bj
+        command: ip -6 route get 240a:a806:2:2::10 from 240a:a806:1:1::10
+        expect_not_contains: unreachable
       - type: ping
         node: cl_bj
         iface: v3501
@@ -17,6 +21,10 @@ cases:
     tags: [core, isolation]
     requires_sites: [sh]
     steps:
+      - type: exec
+        node: cl_bj
+        command: ip -6 route get 240a:a806:3:1::11 from 240a:a806:1:1::10
+        expect_not_contains: unreachable
       - type: ping
         node: cl_bj
         iface: v3501
@@ -37,6 +45,10 @@ cases:
     tags: [core, isolation]
     requires_sites: [sh]
     steps:
+      - type: exec
+        node: cl_sh
+        command: ip -6 route get 240a:a806:1:1::10 from 240a:a806:2:2::10
+        expect_not_contains: unreachable
       - type: ping
         node: cl_sh
         iface: v3502

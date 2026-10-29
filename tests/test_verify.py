@@ -69,6 +69,10 @@ class PingParseTest(unittest.TestCase):
                   '0% packet loss')
         self.assertEqual(parse_ping(output), (0.0, 3))
 
+    def test_unreachable_counts_as_loss(self):
+        output = 'ping6: connect: Network is unreachable'
+        self.assertEqual(parse_ping(output), (100.0, 0))
+
 
 class _FakeNode(object):
     def __init__(self, name, loss):
@@ -102,6 +106,7 @@ class RunnerLogicTest(unittest.TestCase):
         case = Case(name='t', steps=[{
             'type': 'ping', 'node': 'cl_bj', 'iface': 'v3501',
             'target': '240a:a806:1:2::10', 'expect': expect,
+            'retries': 0,
         }], tags=('t',))
         return runner.run_case(case)
 

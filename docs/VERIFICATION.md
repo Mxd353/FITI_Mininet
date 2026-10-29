@@ -62,7 +62,7 @@ cases:
 
 | type | 字段 | 作用 |
 | --- | --- | --- |
-| `ping` | `node` `iface` `target` `expect` `count` `max_loss` `min_received` | 正向或负向连通性 |
+| `ping` | `node` `iface` `target` `expect` `count` `max_loss` `min_received` `retries` | 正向或负向连通性 |
 | `exec` | `node` `command` `expect_contains` `expect_not_contains` | 任意命令断言 |
 | `ovs_trunks` | `switch` `peer` `contains` `not_contains` | OVS 端口 VLAN 集合 |
 | `p4_entry` | `switch` `table` `keys` `present` | P4 表项存在性 |
@@ -72,7 +72,12 @@ cases:
 | `link` | `node` `peer` `action` | 链路 up/down |
 | `sleep` | `seconds` | 等待 |
 
-`ping` 会先发一个预热包，再发 `count` 个，避免 ND/FDB 首包丢失造成误判。
+`ping` 会先发一个预热包，再发 `count` 个；`expect: pass` 失败时默认重试一次
+（`retries: 1`），避免冷启动的 FDB/ND 抖动造成误判。
+
+`ping6` 报 `Network is unreachable` 时视为 100% 不可达：L2 切片之间本来就没有
+路由，这是合法结果；L3 之间的隔离由 `iso-l3-net1-to-net2` 验证（报文确实发出，
+在 E 的 VRF 被丢弃）。
 
 ## 需求追溯矩阵
 
