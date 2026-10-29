@@ -7,7 +7,7 @@
 ```bash
 make parallel-stop      # 清理旧实例
 make verify-dry         # 免 root，只校验用例与配置
-make verify-min         # 4 站点，26 条用例
+make verify-min         # 4 站点，34 条用例（故障用例需 --tag faults）
 make verify-full        # 41 站点
 ```
 
@@ -50,10 +50,10 @@ IPv6 接口 down 之后地址和路由会被删除，up 也不会自动恢复，
 
 | 文件 | 内容 | 数量 |
 | --- | --- | --- |
-| `01-reachability.yaml` | L3VPN/L2VPN 同网络互通、BUM、公网 | 8 |
+| `01-reachability.yaml` | L3VPN/L2VPN 同网络互通、多端点、BUM、公网 | 15 |
 | `02-isolation.yaml` | 跨网络必须 100% 丢包 | 4 |
 | `03-vlan.yaml` | S1 放行、S2 拒绝并行 VLAN | 4 |
-| `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 8 |
+| `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 9 |
 | `05-dynamic.yaml` | EVPN agent 动态增删路由 | 2 |
 | `06-faults.yaml` | 链路 down/up（默认跳过） | 1 |
 
@@ -109,9 +109,13 @@ L2 之间    每个 L2 表都有指向本网络互联地址的默认路由，跨
 `from` 规则命中，报文真正发到 E。
 
 L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续匹配后面的规则，
-最终落到主表；而主表里有内核为所有 VLAN 子接口自动生成的直连路由，
-会把报文从**错误切片的子接口**发出去，造成跨切片注入。默认路由指向本网络的
-互联地址（`240a:a806:{网络}:{100+站点}::1`），报文就留在自己的 VSI 内。
+最终落到主表；主表的默认路由指向网络 1 的网关，会把报文从**错误切片的
+端点**发出去，造成跨切片注入。默认路由指向本网络的互联地址
+（`240a:a806:{网络}:{100+站点}::1`），报文就留在自己的 VSI 内。
+
+同一主机的多个端点共享同一 /64 前缀，内核不允许重复的前缀路由，
+所以端点地址用 `ip -6 addr replace <地址>/64 noprefixroute` 只加地址；
+每个端点需要的前缀路由由它自己的策略路由表提供。
 
 
 ## 需求追溯矩阵
@@ -141,7 +145,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | VLAN 接入与过滤 | 线速转发、队列、缓存 |
 | VRF/VSI 隔离 | 真实 BGP 邻居与 NLRI |
 | SRv6 封装/解封装语义 | SRv6 压缩 SID、TE |
-| 宿主机桥与 VXLAN 段 | 大规模 VTEP、组播 VXLAN |
+| 宿主机多端点（macvlan）接入 | 宿主机 OVS/VXLAN 段、大规模 VTEP |
 | 表项内容与容量 | 控制面收敛时间 |
 | 动态路由增删 | 多控制器主备 |
 | 链路 up/down | 路由自动收敛（当前是静态路由） |
@@ -221,8 +225,8 @@ python3 tools/path_map.py --config configs/parallel-min.json \
     --network 1 --src bj_1 --same-site
 ```
 
-同站点主机会显示宿主机 bridge 和 VXLAN 段；跨站点显示
-VLAN → SRv6 → VLAN。
+同站点显示 S1 二层转发；跨站点显示 VLAN → SRv6 → VLAN。
+宿主机 OVS/VXLAN 段尚未建模。
 
 ## 失败排查
 

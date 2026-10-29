@@ -5,14 +5,12 @@
 
 | 段 | 物理路径 | 封装 | 说明 |
 | --- | --- | --- | --- |
-| 1 | `cl_bj_1 → br_bj_1_1` | 原始以太网 | 宿主机桥接入 |
-| 2 | `br_bj_1_1 → S1_bj` | VLAN 3501 | 接入 |
-| 3 | `S1_bj → E_bj` | VLAN 3501 | 上行到 PE |
-| 4 | `E_bj → C_bj` | SRv6 L3  SA=fd00:0:1:1::1:1  DA=fd00:0:2:1::1:1 | PE 封装并交给核心 |
-| 5 | `C_bj → C_tjn` | IPv6 外层（SRv6） | 核心转发 |
-| 6 | `C_tjn → C_jnn` | IPv6 外层（SRv6） | 核心转发 |
-| 7 | `C_jnn → C_sh` | IPv6 外层（SRv6） | 核心转发 |
-| 8 | `C_sh → E_sh` | IPv6 外层（SRv6） | 到达目的 PE |
-| 9 | `E_sh → S1_sh` | VLAN 3501 | 解封装后按内层 /128 查表投递到主机 |
-| 10 | `S1_sh → br_sh_1_1` | VLAN 3501 | 进入宿主机桥 |
-| 11 | `br_sh_1_1 → cl_sh_1` | 原始以太网 | 交付 |
+| 1 | `cl_bj_1 → S1_bj` | VLAN 3501 | 接入 |
+| 2 | `S1_bj → E_bj` | VLAN 3501 | 上行到 PE |
+| 3 | `E_bj → C_bj` | SRv6 L3  SA=fd00:0:1:1::1:1  DA=fd00:0:2:1::1:1 | PE 封装并交给核心 |
+| 4 | `C_bj → C_tjn` | IPv6 外层（SRv6） | 核心转发 |
+| 5 | `C_tjn → C_jnn` | IPv6 外层（SRv6） | 核心转发 |
+| 6 | `C_jnn → C_sh` | IPv6 外层（SRv6） | 核心转发 |
+| 7 | `C_sh → E_sh` | IPv6 外层（SRv6） | 到达目的 PE |
+| 8 | `E_sh → S1_sh` | VLAN 3501 | 解封装后按内层 /128 查表投递到主机 |
+| 9 | `S1_sh → cl_sh_1` | VLAN 3501 | 交付 |

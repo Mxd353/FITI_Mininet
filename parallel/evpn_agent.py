@@ -158,7 +158,7 @@ class ParallelEvpnAgent:
                                  [route.prefix], [network.id]))
             if site.abbr == target.abbr:
                 s1 = self.switch_ports[e][s1_name(site)]
-                cloud_mac = self.cfg.cloud_mac(network, site, 1)
+                cloud_mac = self.cfg.cloud_mac(network, site, 1, 1)
                 ops.append(self._cmd(
                     e, 'l3_fib', 'forward_l3',
                     [network.id, route.prefix],

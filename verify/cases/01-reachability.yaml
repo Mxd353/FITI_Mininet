@@ -2,6 +2,9 @@ meta:
   name: reachability
   description: 正向连通性：同网络站点互通、BUM、公网
 
+# 源地址绑定（-I <地址>）而不是网卡名：每个 macvlan 端点独立路由表，
+# 只有绑定源地址才会走对应的策略路由表。
+
 cases:
   - name: l3vpn-net1-bj-sh
     tags: [core, l3]
@@ -9,7 +12,7 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3501
+        iface: 240a:a806:1:1::10
         target: 240a:a806:1:2::10
         expect: pass
 
@@ -19,7 +22,7 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3501
+        iface: 240a:a806:1:1::10
         target: 240a:a806:1:14::10
         expect: pass
 
@@ -29,18 +32,30 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3501
+        iface: 240a:a806:1:1::10
         target: 240a:a806:1:23::10
+        expect: pass
+
+  - name: l3vpn-net1-bj-host1-ep2
+    requires_hosts: 2
+    tags: [core, l3, multihost]
+    description: 同一主机两个 macvlan 端点之间可以互通
+    steps:
+      - type: ping
+        node: cl_bj_1
+        iface: 240a:a806:1:1::10
+        target: 240a:a806:1:1::11
         expect: pass
 
   - name: l3vpn-net1-bj-host2
     requires_hosts: 2
     tags: [core, l3, multihost]
+    description: 同站点两台主机的端点经 S1 二层互通
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3501
-        target: 240a:a806:1:1::11
+        iface: 240a:a806:1:1::10
+        target: 240a:a806:1:1::20
         expect: pass
 
   - name: l3vpn-net1-bj-to-sh-host2
@@ -50,8 +65,8 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3501
-        target: 240a:a806:1:2::11
+        iface: 240a:a806:1:1::10
+        target: 240a:a806:1:2::21
         expect: pass
 
   - name: l3vpn-net1-bj2-sh2
@@ -61,8 +76,18 @@ cases:
     steps:
       - type: ping
         node: cl_bj_2
-        iface: v3501
-        target: 240a:a806:1:2::11
+        iface: 240a:a806:1:1::20
+        target: 240a:a806:1:2::20
+        expect: pass
+
+  - name: l2vpn-net3-bj-host1-ep2
+    requires_hosts: 2
+    tags: [core, l2, multihost]
+    steps:
+      - type: ping
+        node: cl_bj_1
+        iface: 240a:a806:3:1::100
+        target: 240a:a806:3:1::101
         expect: pass
 
   - name: l2vpn-net3-bj-host2
@@ -71,8 +96,8 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3503
-        target: 240a:a806:3:1::110
+        iface: 240a:a806:3:1::100
+        target: 240a:a806:3:1::102
         expect: pass
 
   - name: l2vpn-net3-bj-to-sh-host2
@@ -82,8 +107,8 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3503
-        target: 240a:a806:3:1::111
+        iface: 240a:a806:3:1::100
+        target: 240a:a806:3:1::107
         expect: pass
 
   - name: l3vpn-net2-bj-sh
@@ -92,7 +117,7 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3502
+        iface: 240a:a806:2:1::10
         target: 240a:a806:2:2::10
         expect: pass
 
@@ -102,8 +127,8 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3503
-        target: 240a:a806:3:1::11
+        iface: 240a:a806:3:1::100
+        target: 240a:a806:3:1::104
         expect: pass
 
   - name: l2vpn-net3-bj-tjn
@@ -112,8 +137,8 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3503
-        target: 240a:a806:3:1::1d
+        iface: 240a:a806:3:1::100
+        target: 240a:a806:3:1::134
         expect: pass
 
   - name: bum-net3
@@ -122,7 +147,7 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3503
+        iface: 240a:a806:3:1::100
         target: ff02::1
         count: 3
         min_received: 1
@@ -134,6 +159,6 @@ cases:
     steps:
       - type: ping
         node: cl_bj_1
-        iface: v3501
+        iface: 240a:a806:1:1::10
         target: 2001:255:0:100::2000
         expect: pass

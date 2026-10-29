@@ -77,5 +77,6 @@
         "public_peer": "2001:255:0:100::2000"
     },
     "fiti_topology": "fiti.json",
-    "hosts_per_site": 2
+    "hosts_per_site": 2,
+    "endpoints_per_host": 2
 }

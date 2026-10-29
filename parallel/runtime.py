@@ -60,7 +60,7 @@ def _resource_warning(cfg):
     hosts = len(cfg.sites) * int(cfg.hosts_per_site)
     if cfg.hosts_per_site > 1 and len(cfg.sites) > 8:
         print('*** 警告：%d 站点 × %d 主机 = %d 台云主机，'
-              'netns/bridge/VXLAN 数量较大，建议先用 parallel-min'
+              'netns/macvlan/路由表数量较大，建议先用 parallel-min'
               % (len(cfg.sites), cfg.hosts_per_site, hosts))
     try:
         with open('/proc/meminfo', encoding='utf-8') as handle:

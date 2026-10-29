@@ -47,8 +47,8 @@ class PathMapTest(unittest.TestCase):
 
     def test_same_site_is_two_l2_segments(self):
         segments, _ = _segments(self.cfg, 1, 'bj_1', 'bj_2')
-        self.assertEqual(len(segments), 4)
-        self.assertIn('VXLAN', segments[2]['encap'])
+        self.assertEqual(len(segments), 2)
+        self.assertIn('VXLAN', segments[1]['note'])
         self.assertEqual(segments[-1]['to'], 'cl_bj_2')
 
     def test_host_parsing(self):

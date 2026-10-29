@@ -34,8 +34,7 @@ NON_PARALLEL_VLANS = '1-3500,3901-4094'
 PARALLEL_VLAN_MIN = 3501
 PARALLEL_VLAN_MAX = 3900
 
-#: The VXLAN underlay uses VLAN 4000 between hosts; keep it off the E port.
-E_UPLINK_VLANS = '1-3999,4001-4094'
+
 
 
 def _peer_intf(intf):
@@ -120,7 +119,7 @@ def _configure_site(net, cfg, site):
     ensure_normal_flow(s1)
     ensure_normal_flow(s2)
 
-    set_trunk(s1, intf_to(s1, e_name(site)), E_UPLINK_VLANS)
+    set_trunk(s1, intf_to(s1, e_name(site)), ALL_VLANS)
     set_trunk(s2, uplink_s2, NON_PARALLEL_VLANS)
     for host_id in cfg.host_ids():
         cloud = cloud_name(site, host_id)

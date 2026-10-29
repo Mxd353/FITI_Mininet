@@ -105,22 +105,26 @@ def _huawei_public():
 
 
 def render_sim(cfg):
-    header = ('site\tid\thost\tnetwork\tvlan\tvpn\tbusiness\t'
+    header = ('site\tid\thost\tendpoint\tnetwork\tvlan\tvpn\tbusiness\t'
               'interconnect\tcloud\tgateway\tsid')
     lines = [header]
     for site in sorted(cfg.sites, key=lambda item: item.id):
         for network in sorted(cfg.networks_for_site(site),
                               key=lambda item: item.id):
             for host_id in cfg.host_ids():
-                lines.append('\t'.join([
-                    site.abbr, str(site.id), str(host_id), str(network.id),
-                    str(network.vlan), network.vpn,
-                    str(cfg.business_network(network, site)),
-                    str(cfg.interconnect_network(network, site)),
-                    cfg.cloud_address(network, site, host_id),
-                    cfg.cloud_gateway(network, site, host_id),
-                    _sid(cfg, network, site),
-                ]))
+                for endpoint in cfg.endpoint_ids():
+                    lines.append('\t'.join([
+                        site.abbr, str(site.id), str(host_id),
+                        str(endpoint), str(network.id),
+                        str(network.vlan), network.vpn,
+                        str(cfg.business_network(network, site)),
+                        str(cfg.interconnect_network(network, site)),
+                        cfg.cloud_address(network, site, host_id, endpoint),
+                        (cfg.cloud_gateway(network, site, host_id, endpoint)
+                         if network.vpn == 'l3'
+                         else cfg.central_address(network, site)),
+                        _sid(cfg, network, site),
+                    ]))
     return '\n'.join(lines) + '\n'
 
 
@@ -142,6 +146,7 @@ def render_summary(cfg):
     payload = {
         'config': os.path.abspath(cfg.path),
         'hosts_per_site': cfg.hosts_per_site,
+        'endpoints_per_host': cfg.endpoints_per_host,
         'sites': [{'id': site.id, 'abbr': site.abbr, 'name': site.name}
                   for site in sorted(cfg.sites, key=lambda item: item.id)],
         'networks': [],

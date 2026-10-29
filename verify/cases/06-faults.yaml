@@ -14,7 +14,7 @@ cases:
         action: down
       - type: ping
         node: cl_bj_1
-        iface: v3501
+        iface: 240a:a806:1:1::10
         target: 240a:a806:1:14::10
         expect: fail
       - type: link
@@ -25,7 +25,7 @@ cases:
         seconds: 2
       - type: ping
         node: cl_bj_1
-        iface: v3501
+        iface: 240a:a806:1:1::10
         target: 240a:a806:1:14::10
         expect: pass
     teardown:

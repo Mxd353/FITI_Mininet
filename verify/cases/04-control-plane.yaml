@@ -58,7 +58,7 @@ cases:
       - type: p4_entry
         switch: E_bj
         table: l2_tunnel
-        keys: [3503, "02:00:02:00:03:01"]
+        keys: [3503, "02:02:00:03:01:01"]
         present: true
 
   - name: c-bj-underlay-route
@@ -76,18 +76,18 @@ cases:
       - type: exec
         node: cl_bj_1
         command: ip -6 rule show
-        expect_contains: "20001"
+        expect_contains: "20016"
 
   - name: cl-bj-l2-default-route
     tags: [core, control, l2]
     steps:
       - type: exec
         node: cl_bj_1
-        command: ip -6 route show table 30003
+        command: ip -6 route show table 30048
         expect_contains: default
       - type: exec
         node: cl_bj_1
-        command: ip -6 route show table 30004
+        command: ip -6 route show table 30064
         expect_contains: default
 
   - name: cl-bj-default-route
@@ -95,5 +95,5 @@ cases:
     steps:
       - type: exec
         node: cl_bj_1
-        command: ip -6 route show table 20001
+        command: ip -6 route show table 20016
         expect_contains: "default"

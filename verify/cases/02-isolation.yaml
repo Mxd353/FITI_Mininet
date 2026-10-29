@@ -13,7 +13,7 @@ cases:
         expect_not_contains: unreachable
       - type: ping
         node: cl_bj_1
-        iface: v3501
+        iface: 240a:a806:1:1::10
         target: 240a:a806:2:2::10
         expect: fail
 
@@ -23,12 +23,12 @@ cases:
     steps:
       - type: exec
         node: cl_bj_1
-        command: ip -6 route get 240a:a806:3:1::11 from 240a:a806:1:1::10
+        command: ip -6 route get 240a:a806:3:1::104 from 240a:a806:1:1::10
         expect_not_contains: unreachable
       - type: ping
         node: cl_bj_1
-        iface: v3501
-        target: 240a:a806:3:1::11
+        iface: 240a:a806:1:1::10
+        target: 240a:a806:3:1::104
         expect: fail
 
   - name: iso-l2-net3-to-net4
@@ -38,12 +38,12 @@ cases:
     steps:
       - type: exec
         node: cl_bj_1
-        command: ip -6 route get 240a:a806:4:1::11 from 240a:a806:3:1::10
+        command: ip -6 route get 240a:a806:4:1::104 from 240a:a806:3:1::100
         expect_not_contains: unreachable
       - type: ping
         node: cl_bj_1
-        iface: 240a:a806:3:1::10
-        target: 240a:a806:4:1::11
+        iface: 240a:a806:3:1::100
+        target: 240a:a806:4:1::104
         expect: fail
 
   - name: iso-l3-net2-to-net1

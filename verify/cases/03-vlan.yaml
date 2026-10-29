@@ -10,7 +10,6 @@ cases:
         switch: S1_bj
         peer: E_bj
         contains: [3501, 3502, 3503, 3504]
-        not_contains: [4000]
       - type: ovs_trunks
         switch: S2_bj
         peer: A_bj
@@ -25,7 +24,6 @@ cases:
         switch: S1_sh
         peer: E_sh
         contains: [3501, 3502, 3503, 3504]
-        not_contains: [4000]
       - type: ovs_trunks
         switch: S2_sh
         peer: A_sh
@@ -40,7 +38,6 @@ cases:
         switch: S1_tjn
         peer: E_tjn
         contains: [3501, 3502, 3503, 3504]
-        not_contains: [4000]
       - type: ovs_trunks
         switch: S2_tjn
         peer: A_tjn
@@ -55,7 +52,6 @@ cases:
         switch: S1_jnn
         peer: E_jnn
         contains: [3501, 3502, 3503, 3504]
-        not_contains: [4000]
       - type: ovs_trunks
         switch: S2_jnn
         peer: A_jnn

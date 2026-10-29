@@ -248,7 +248,9 @@ class RenderTest(unittest.TestCase):
     def test_sim_rows(self):
         rows = render_sim(self.cfg).strip().splitlines()
         hosts = self.cfg.hosts_per_site
-        self.assertEqual(len(rows), 1 + len(self.cfg.sites) * 4 * hosts)
+        endpoints = self.cfg.endpoints_per_host
+        self.assertEqual(len(rows),
+                         1 + len(self.cfg.sites) * 4 * hosts * endpoints)
         self.assertIn('3501', rows[1])
         self.assertIn('fd00:0:1:1::1:1', rows[1])
         self.assertIn('240a:a806:1:1::11', rows[2])

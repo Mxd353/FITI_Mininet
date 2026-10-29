@@ -46,6 +46,7 @@ class ParallelConfig:
     l2_tunnel: str = 'srv6'
     underlay: Dict[str, str] = field(default_factory=dict)
     hosts_per_site: int = 1
+    endpoints_per_host: int = 1
 
     def site(self, abbr: str) -> Site:
         for item in self.sites:
@@ -91,46 +92,54 @@ class ParallelConfig:
         """Short Linux VLAN subinterface name inside the cloud netns."""
         return 'v%d' % network.vlan
 
-    def tenant_ifname(self, site: Site, host: int,
-                      network: Network) -> str:
-        """Host-side tenant interface (bridge port when VXLAN is enabled)."""
-        if int(self.hosts_per_site) <= 1:
-            return self.vlan_ifname(network)
-        return 'tp_%s_%d_%d' % (site.abbr, int(host), network.id)
+    def endpoint_ifname(self, site: Site, host: int, endpoint: int,
+                        network: Network) -> str:
+        return 'ep_%s_%d_%d_%d' % (site.abbr, int(host), int(endpoint),
+                                   network.id)
 
-    def bridge_name(self, site: Site, host: int, network: Network) -> str:
-        return 'br_%s_%d_%d' % (site.abbr, int(host), network.id)
+    def endpoint_table(self, network: Network, host: int,
+                       endpoint: int) -> int:
+        base = 20000 if network.vpn == 'l3' else 30000
+        index = ((int(host) - 1) * int(self.endpoints_per_host)
+                 + (int(endpoint) - 1))
+        return base + int(network.id) * 16 + index
 
-    def vxlan_ifname(self, site: Site, host: int, network: Network) -> str:
-        return 'vx_%s_%d_%d' % (site.abbr, int(host), network.id)
+    def endpoint_rule_priority(self, network: Network, host: int,
+                               endpoint: int) -> int:
+        index = ((int(host) - 1) * int(self.endpoints_per_host)
+                 + (int(endpoint) - 1))
+        return 10000 + int(network.id) * 16 + index
 
-    @staticmethod
-    def underlay_ifname() -> str:
-        return 'u4000'
-
-    @staticmethod
-    def underlay_address(site: Site, host: int) -> str:
-        return '10.0.%d.%d' % (int(site.id), int(host))
+    def network_table(self, network: Network) -> int:
+        base = 20000 if network.vpn == 'l3' else 30000
+        return base + int(network.id) * 16
 
     def host_ids(self):
         """Host indexes inside one site (1..hosts_per_site)."""
         return range(1, int(self.hosts_per_site) + 1)
 
-    def cloud_mac(self, network: Network, site: Site,
-                  host: int = 1) -> str:
-        """Deterministic MAC for one cloud host and one slice.
+    def endpoint_ids(self):
+        """Endpoint indexes inside one host (1..endpoints_per_host)."""
+        return range(1, int(self.endpoints_per_host) + 1)
 
-        Six bytes: locally-administered prefix, 16-bit site, 16-bit network,
-        8-bit host index.  Host 1 keeps the previous MAC value.
+    def cloud_mac(self, network: Network, site: Site,
+                  host: int = 1, endpoint: int = 1) -> str:
+        """Deterministic MAC for one endpoint.
+
+        Six bytes: locally-administered prefix, 8-bit site, 16-bit network,
+        8-bit host, 8-bit endpoint.
         """
         site_id = int(site.id)
         network_id = int(network.id)
         host_id = int(host)
-        if not 1 <= host_id <= 255:
-            raise ValueError('主机编号必须在 1-255: %s' % host_id)
+        endpoint_id = int(endpoint)
+        for name, value in (('site', site_id), ('host', host_id),
+                            ('endpoint', endpoint_id)):
+            if not 1 <= value <= 255:
+                raise ValueError('%s 编号必须在 1-255: %s' % (name, value))
         return '02:%02x:%02x:%02x:%02x:%02x' % (
-            (site_id >> 8) & 0xff, site_id & 0xff,
-            (network_id >> 8) & 0xff, network_id & 0xff, host_id)
+            site_id & 0xff, (network_id >> 8) & 0xff,
+            network_id & 0xff, host_id, endpoint_id)
 
     def srv6_sid(self, network: Network, site: Site) -> str:
         """Per-site, per-network SRv6 SID used by the static L3VPN PE.
@@ -178,30 +187,34 @@ class ParallelConfig:
         return str(net.network_address + 2)
 
     def cloud_address(self, network: Network, site: Site,
-                      host: int = 1, offset: int = None) -> str:
-        """Address of one cloud host inside its slice.
+                      host: int = 1, endpoint: int = 1,
+                      offset: int = None) -> str:
+        """Address of one endpoint inside its slice.
 
-        L3 hosts stay in the site /64 (host 1 = ::10, host 2 = ::11, ...).
-        L2 slices are a flat /64, so extra hosts are placed in a high offset
-        range to keep the existing host-1 addresses stable.
+        L3 endpoints stay in the site /64: host*16 + endpoint gives
+        ::10, ::11, ::20, ::21.  L2 slices are a flat /64, so every
+        (site, host, endpoint) gets a unique high offset.
         """
         host_id = int(host)
+        endpoint_id = int(endpoint)
         if network.vpn == 'l2':
             net = self.l2_network(network)
             if offset is None:
-                offset = (0x10 + max(0, site.id - 1)
-                          + (host_id - 1) * 0x100)
+                index = ((int(site.id) - 1) * int(self.hosts_per_site)
+                         + (host_id - 1)) * int(self.endpoints_per_host) \
+                    + (endpoint_id - 1)
+                offset = 0x100 + index
         else:
             net = self.business_network(network, site)
             if offset is None:
-                offset = 0x10 + (host_id - 1)
+                offset = 0x10 + (host_id - 1) * 0x10 + (endpoint_id - 1)
         return str(net.network_address + int(offset))
 
     def cloud_gateway(self, network: Network, site: Site,
-                      host: int = 1) -> str:
-        # All hosts of a site share the same gateway address; the static
+                      host: int = 1, endpoint: int = 1) -> str:
+        # All endpoints of a site share the same gateway address; the static
         # neighbor entry points at the site PE.
-        return self.cloud_address(network, site, 1, 1)
+        return self.cloud_address(network, site, 1, 1, offset=1)
 
     def network_map(self) -> Dict[int, Network]:
         return {item.id: item for item in self.networks}
@@ -289,6 +302,10 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     hosts_per_site = int(raw.get('hosts_per_site', 1))
     if not 1 <= hosts_per_site <= 255:
         raise ValueError('hosts_per_site 必须在 1-255: %s' % hosts_per_site)
+    endpoints_per_host = int(raw.get('endpoints_per_host', 1))
+    if not 1 <= endpoints_per_host <= 255:
+        raise ValueError('endpoints_per_host 必须在 1-255: %s'
+                         % endpoints_per_host)
     fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
     if not os.path.isabs(fiti_topology):
         fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)
@@ -313,6 +330,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         l2_tunnel=l2_tunnel,
         underlay=dict(raw.get('underlay', {}) or {}),
         hosts_per_site=hosts_per_site,
+        endpoints_per_host=endpoints_per_host,
     )
 
 
@@ -323,7 +341,8 @@ def dump_config(cfg: ParallelConfig) -> None:
     print('FITI 核心: %s（%d 条链路）'
           % (cfg.fiti_topology, len(cfg.fiti.links)))
     print('L2 隧道: %s' % cfg.l2_tunnel)
-    print('每站点主机: %d' % cfg.hosts_per_site)
+    print('每站点主机: %d，每主机端点: %d'
+          % (cfg.hosts_per_site, cfg.endpoints_per_host))
     print('并行网络:')
     for network in cfg.networks:
         print('  ID=%d VLAN=%d VPN=%s'
@@ -338,5 +357,8 @@ def dump_config(cfg: ParallelConfig) -> None:
                   % (site.abbr, subnet,
                      cfg.interconnect_network(network, site)))
             for host_id in cfg.host_ids():
-                print('      主机 %d: %s' % (
-                    host_id, cfg.cloud_address(network, site, host_id)))
+                for endpoint in cfg.endpoint_ids():
+                    print('      主机 %d 端点 %d: %s' % (
+                        host_id, endpoint,
+                        cfg.cloud_address(network, site, host_id,
+                                          endpoint)))
