@@ -369,6 +369,10 @@ def _configure_cloud_host(net, cfg, site, host_id):
                 '启用 host underlay')
         _set_addr(cloud, underlay,
                   cfg.underlay_address(site, host_id) + '/64')
+        # veth 默认开校验和卸载，抓包会看到“bad udp cksum”；
+        # 关掉 tx 卸载，VXLAN 抓包才是线上真实的样子。
+        cloud.cmd('ethtool -K %s tx off 2>/dev/null || true'
+                  % underlay.name)
 
     for network in cfg.networks_for_site(site):
         for endpoint in cfg.endpoint_ids():
@@ -385,6 +389,7 @@ def _configure_cloud_host(net, cfg, site, host_id):
                     % (tap, network.vlan), '配置 tap 的 VLAN')
             cloud.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
                       % tap)
+            cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % tap)
             _run_ip(cloud, 'ip link set dev %s up' % tap, '启用 tap')
             # SRv6 封装要占 64B（L3）/78B（L2），端点 MTU 留出余量，
             # 否则大包封装后超过 1500 被 BMv2 丢弃，且没有 ICMPv6 PTB。
@@ -416,6 +421,9 @@ def _configure_cloud_host(net, cfg, site, host_id):
                       % vx)
             _run_ip(cloud, 'bridge link set dev %s learning off' % vx,
                     '关闭 VXLAN 口学习')
+            cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % vx)
+            _run_ip(cloud, 'ip link set dev %s type vxlan tos inherit' % vx,
+                    'VXLAN 外层继承 DSCP')
             _run_ip(cloud, 'ip link set dev %s up' % vx, '启用 VXLAN')
             for endpoint in cfg.endpoint_ids():
                 peer_mac = cfg.cloud_mac(network, site, peer_id, endpoint)

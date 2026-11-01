@@ -167,6 +167,8 @@ veth 上转一圈：
 - 静态 FDB：本机 VM MAC 指向自己的 tap 口，对端 PM 的 VM MAC 指向 VXLAN 口；
 - 只有 PM-A 有业务 VLAN 上联（`eth0` 直接进桥，由桥打 tag），PM-B 的站外
   流量先经 VXLAN 到 PM-A 再出站点，避免 S1 上出现重复帧；
+- VXLAN 外层继承内层 DSCP（`tos inherit`），桥/tap/VXLAN 口关闭 IPv6，
+  underlay veth 关闭 tx 校验和卸载，保证抓包与线上报文一致；
 - 手工复核：
 
 ```bash

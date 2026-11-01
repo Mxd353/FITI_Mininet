@@ -190,7 +190,10 @@ underlay：fd00:0:{站点}:9::1（PM-A）/ ::2（PM-B）
 - 端点地址是 `/64` 加 `noprefixroute`，前缀路由放在各自的策略路由表里；
 - 出站点为 VLAN → SRv6；L2VPN 隧道内层不带业务 VLAN，对端 E 解封装后
   按自己的 VSI 重新打上（与真实 `dot1q` 子接口一致）；
-- VLAN 子接口不再存在，上联是桥的 trunk 口，避免“桥 + 子接口”各打一次 tag。
+- VLAN 子接口不再存在，上联是桥的 trunk 口，避免“桥 + 子接口”各打一次 tag；
+- VXLAN 外层 IPv6 继承内层 DSCP（`tos inherit`），与 SRv6 段一致；
+- 桥、tap、VXLAN 口都关闭 IPv6，避免 RS/MLD 噪声被当成 BUM 复制进隧道；
+- underlay veth 关闭 tx 校验和卸载，抓包看到的 UDP 校验和是真实值。
 
 ## 接入交换机（OVS）
 
