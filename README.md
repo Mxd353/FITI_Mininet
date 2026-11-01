@@ -5,7 +5,7 @@
 当前范围：
 
 - 41 个站点；
-- 每站点 `C/E/A/S1/S2` 和两台云服务器，每台两个 macvlan 端点；
+- 每站点 `C/E/A/S1/S2` 和两台云服务器，每台两个 VM 端点（宿主机 bridge + VXLAN）；
 - 4 个并行网络（2 个 L3VPN + 2 个 L2VPN）；
 - 站点 PE（`E`）使用 BMv2/P4；
 - 接入交换机（`S1`/`S2`）使用 OVS 二层交换；
@@ -83,7 +83,7 @@ make parallel-run
 41 台 BMv2（每站点 E）
 82 台 OVS（每站点 S1/S2）
 166 个 Linux netns（每站点 2 台云主机）
-328 个 macvlan 端点
+82 个宿主机 bridge、328 个 tap veth、328 个 VXLAN 设备
 ```
 
 Thrift 端口段被占用时会自动向后寻找空闲端口段，也可以显式指定起始端口：
@@ -122,7 +122,7 @@ C         cloud × 2
 - `S1`：OVS，上行放行并行 VLAN；
 - `S2`：OVS，上行拒绝并行 VLAN；
 - `C`、`A`：Linux netns；
-- `cloud`：每站点两台（`cl_<站点>_1`、`cl_<站点>_2`），每台两个 macvlan 端点；
+- `cloud`：每站点两台（`cl_<站点>_1`、`cl_<站点>_2`），每台一个宿主机 bridge、两个 VM 端点；
 - `pub_border`、`fix`：北京公网边界。
 
 站点之间的核心链路直接使用 FITI 实际拓扑：
@@ -137,27 +137,45 @@ configs/fiti.json
 
 例如北京到上海在最小验证拓扑中经过天津和济南。
 
-## 云主机与 macvlan 端点
+## 云主机与宿主机 VXLAN
 
-每站点两台云服务器，每台通过 VLAN 子接口接入，并在每个子接口上创建
-两个 macvlan 端点（相当于两台虚机）：
+每站点两台云服务器（PM），两台都在同一台物理机上。每台 PM 内部用
+一个开启 VLAN 过滤的 Linux bridge 顶替物理机里的 OVS：每个虚机一条
+veth（VM 侧持地址/MAC，bridge 侧是 access 口），每个网络一个 VXLAN
+设备，隧道对端是本站点的另一台 PM——两个 VTEP 都在本机，报文在
+veth 上转一圈，不产生站外流量。
 
 ```text
-cl_bj_1
-├── eth0 -> S1 trunk
-├── v3501
-│   ├── ep_bj_1_1_1  240a:a806:1:1::10
-│   └── ep_bj_1_2_1  240a:a806:1:1::11
-├── v3502
-│   ├── ep_bj_1_1_2  240a:a806:2:1::10
-│   └── ep_bj_1_2_2  240a:a806:2:1::11
-...
-
-cl_bj_2
-├── v3501
-│   ├── ep_bj_2_1_1  240a:a806:1:1::20
-│   └── ep_bj_2_2_1  240a:a806:1:1::21
+cl_bj_1（PM-A，带业务上联）                cl_bj_2（PM-B，只有主机 overlay）
+├── eth0 -> S1 trunk                       ├── eth1 -> cl_bj_1-eth1（host underlay）
+├── eth1 -> cl_bj_2-eth1（underlay）        ├── br_bj_2
+├── br_bj_1                                 │   ├── tp_bj_2_1_1 -> ep_bj_2_1_1  ::20
+│   ├── tp_bj_1_1_1 -> ep_bj_1_1_1  ::10    │   └── vx_bj_2_1  (VNI 1)
+│   ├── tp_bj_1_2_1 -> ep_bj_1_2_1  ::11    │
+│   ├── vx_bj_1_1  (VNI 1)                  │
+│   └── eth0        (trunk，VLAN 3501-3504)  │
+└── ...
 ```
+
+```text
+VM 侧（ep_*）      : 业务地址 + 独立策略路由表，MTU 1400
+access 口（tp_*）  : bridge 口，pvid = 业务 VLAN，untagged
+宿主机桥（br_*）   : vlan_filtering=1，静态 FDB 固定本机与对端 VM 的 MAC
+VXLAN（vx_*）      : VNI = 网络 ID，local/remote = fd00:0:{站点}:9::1/::2
+上联               : PM-A 的 eth0 直接进桥，由桥按 VID 打 tag（单层 802.1Q）
+```
+
+转发路径：
+
+| 流量 | 路径 | 线上报文 |
+| --- | --- | --- |
+| 同站点 VM → VM（跨 PM） | tap → bridge → VXLAN → 对端 bridge → tap | VXLAN（VNI = 网络 ID） |
+| 同 PM 的两个 VM | tap → bridge → tap | 普通以太网，不出桥 |
+| VM → 其它站点 | tap → bridge → VLAN → S1 → E → SRv6 | 段内 VLAN，跨站点 SRv6 |
+| 其它站点 → VM | E → S1 → VLAN → bridge → tap | 同上 |
+
+只有 PM-A 有业务 VLAN 上联，PM-B 的站外流量先经 VXLAN 到 PM-A 再出站点；
+这样同站点流量一定走隧道，也不会在 S1 上出现重复帧。
 
 地址和 MAC：
 
@@ -165,16 +183,14 @@ cl_bj_2
 L3：站点 /64 内，主机 h 端点 e -> ::{0x10 + (h-1)*0x10 + (e-1)}
 L2：扁平 /64 内，::{0x100 + ((站点-1)*主机数 + (主机-1))*端点数 + (端点-1)}
 MAC：02:{站点}:{网络高}{网络低}:{主机}:{端点}
+underlay：fd00:0:{站点}:9::1（PM-A）/ ::2（PM-B）
 ```
 
 - 每个端点有独立的策略路由表和源地址规则，报文按源地址选表；
-- 端点地址是 `/64` 加 `noprefixroute`，前缀路由放在各自的策略路由表里，
-  避免同一主机多个端点争抢同一个 /64 前缀路由；
-- 同一主机的两个端点由 macvlan bridge 模式内部互通；
-- 同站点不同主机由 S1 二层转发，不经过 E；
-- 出站点仍为 VLAN → SRv6；L2VPN 隧道内层不带业务 VLAN，
-  对端 E 解封装后按自己的 VSI 重新打上（与真实 `dot1q` 子接口一致）；
-- 文档中的宿主机 OVS/VXLAN 段暂未建模。
+- 端点地址是 `/64` 加 `noprefixroute`，前缀路由放在各自的策略路由表里；
+- 出站点为 VLAN → SRv6；L2VPN 隧道内层不带业务 VLAN，对端 E 解封装后
+  按自己的 VSI 重新打上（与真实 `dot1q` 子接口一致）；
+- VLAN 子接口不再存在，上联是桥的 trunk 口，避免“桥 + 子接口”各打一次 tag。
 
 ## 接入交换机（OVS）
 
@@ -336,6 +352,15 @@ cl_bj_1 ping6 -c 3 -I ep_bj_1_1_3 ff02::1
 
 ```text
 cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 2001:255:0:100::2000
+```
+
+### 同站点 VXLAN
+
+```text
+# cl_bj_1 上抓 VXLAN，同时在 cl_bj_1 里 ping cl_bj_2 的端点
+cl_bj_1 tcpdump -i any -nn 'udp port 4789'
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:1::20
+cl_bj_1 bridge fdb show | grep 02:01:00:01:02:01
 ```
 
 ### 业务流量（TCP / HTTP）
@@ -502,11 +527,9 @@ parallel_evpn_ctl.py        agent 客户端
 - 动态 agent 只支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；
 - 接入交换机是 OVS，L2 转发靠 MAC 学习，不是 EVPN 下发的静态 FIB；
 - 41 台 BMv2 仍然占用较多资源，全量启动较慢；
-- 每站点 2 主机 × 2 端点会产生 166 个 netns、328 个 macvlan、656 张路由表；
-  41 站点全量已实测可跑通（峰值内存约 4.2 GB，启动约 1 分钟），
-  调试时仍建议先用 4 站点；
-- 宿主机 OVS/VXLAN 段尚未建模，同站点端点之间是 VLAN 二层转发；
-- 每台主机有 8 个 macvlan 端点、16 张策略路由表，端点增多时表项和规则数量线性增长；
+- 每站点 2 主机 × 2 端点会产生 166 个 netns、82 个 bridge、328 个 tap veth、
+  328 个 VXLAN 和 656 张路由表；41 站点全量的资源占用见 VERIFICATION.md；
+- 同站点跨 PM 的流量走 VXLAN（VNI = 网络 ID），两个 VTEP 都在本机；
 - L2 远端主机之间依赖 ND 解析，不再逐主机下发静态邻居；
 - SRv6 封装有额外开销（L3 64B、L2 78B），端点 MTU 默认 1400（`endpoint_mtu`），
   超过端点 MTU 的报文在主机侧就被拒绝，不会被隧道黑洞；
@@ -562,15 +585,21 @@ cl_bj_1 ip -6 route get 240a:a806:1:2::10 from 240a:a806:1:1::10
 按源地址查表，所以 `route get` 和 `ping` 都要带 `from` / `-I <源地址>`；
 只写 `ip -6 route get <目的>` 会走主表，看不到端点自己的表。
 
-### `ip link add ... type macvlan` 报 `Unknown device type`
+### `ip link add ... type vxlan` 报 `Unknown device type`
 
 内核模块没有加载。非初始 namespace 里的设备创建不会触发模块自动加载，
 所以启动脚本会先 `modprobe`。手动确认：
 
 ```bash
-sudo modprobe macvlan
-lsmod | grep macvlan
+sudo modprobe vxlan
+lsmod | grep vxlan
 ```
+
+### 上联出现双层 VLAN（QinQ）
+
+说明桥的 trunk 口又套了一层 VLAN 子接口。上联必须是**原设备**（`eth0`）
+直接进桥，由桥按 VID 打 tag；桥和子接口各打一次就会出现两层 802.1Q，
+E 的 `set_trunk` 会把这种帧丢掉。
 
 ### `ping` 报 `bind: Cannot assign requested address`
 

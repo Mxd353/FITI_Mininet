@@ -24,7 +24,7 @@ from parallel.topology import (ParallelTopology, a_name, c_name,
 #: 内核模块。非初始 netns 里的设备创建不会触发模块自动加载
 #: （request_module 需要初始 netns 的 CAP_SYS_MODULE），
 #: 所以必须在启动前显式加载，否则会报 "Unknown device type"。
-KERNEL_MODULES = ('macvlan', 'vxlan', '8021q', 'openvswitch')
+KERNEL_MODULES = ('vxlan', '8021q', 'openvswitch')
 
 
 def ensure_kernel_modules():
@@ -38,7 +38,7 @@ def ensure_kernel_modules():
                                        (result.stderr or '').strip() or
                                        'modprobe 失败'))
     if missing:
-        raise RuntimeError('内核模块加载失败（云主机端点需要 macvlan）：%s'
+        raise RuntimeError('内核模块加载失败（宿主机 VXLAN 需要 vxlan）：%s'
                            % '; '.join(missing))
 
 
@@ -82,7 +82,7 @@ def _resource_warning(cfg):
     hosts = len(cfg.sites) * int(cfg.hosts_per_site)
     if cfg.hosts_per_site > 1 and len(cfg.sites) > 8:
         print('*** 警告：%d 站点 × %d 主机 = %d 台云主机，'
-              'netns/macvlan/路由表数量较大，建议先用 parallel-min'
+              'netns/bridge/VXLAN/路由表数量较大，建议先用 parallel-min'
               % (len(cfg.sites), cfg.hosts_per_site, hosts))
     try:
         with open('/proc/meminfo', encoding='utf-8') as handle:

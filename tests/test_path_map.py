@@ -45,11 +45,27 @@ class PathMapTest(unittest.TestCase):
         self.assertIn('SRv6 L2', encap)
         self.assertIn('fd00:0:1:1::2:3', encap)
 
-    def test_same_site_is_two_l2_segments(self):
+    def test_same_site_uses_vxlan(self):
         segments, _ = _segments(self.cfg, 1, 'bj_1', 'bj_2')
-        self.assertEqual(len(segments), 2)
-        self.assertIn('VXLAN', segments[1]['note'])
+        self.assertEqual(len(segments), 5)
+        encap = ' '.join(item['encap'] for item in segments)
+        self.assertIn('VXLAN VNI 1', encap)
+        self.assertEqual(segments[0]['from'], 'cl_bj_1')
         self.assertEqual(segments[-1]['to'], 'cl_bj_2')
+
+    def test_same_pm_stays_local(self):
+        segments, _ = _segments(self.cfg, 1, 'bj_1', 'bj_1')
+        encap = ' '.join(item['encap'] for item in segments)
+        self.assertNotIn('VXLAN', encap)
+        self.assertEqual(len(segments), 4)
+
+    def test_cross_site_from_second_pm_tunnels_first(self):
+        segments, _ = _segments(self.cfg, 1, 'bj_2', 'sh_2')
+        encap = [item['encap'] for item in segments]
+        self.assertIn('VXLAN VNI 1', encap)
+        self.assertLess(encap.index('VXLAN VNI 1'),
+                        [i for i, e in enumerate(encap)
+                         if e.startswith('SRv6')][0])
 
     def test_host_parsing(self):
         site, host, name = parse_host(self.cfg, 'cl_sh_2')

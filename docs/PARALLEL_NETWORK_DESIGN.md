@@ -10,7 +10,8 @@
 - 站点接入交换机 S1/S2 使用 OVS，VLAN 放行/拒绝由 trunk 列表实现；
 - 每站点一台云服务器，用 VLAN 子接口区分并行网络切片；
 - 网络 1/2 为 L3VPN，网络 3/4 为 L2VPN，均覆盖全部站点；
-- L3VPN/L2VPN 使用静态 SRv6，VXLAN 保留为回退模式；
+- L3VPN/L2VPN 使用静态 SRv6；E↔E 另保留 VXLAN 回退模式，
+  站点内 PM↔PM 则固定用 VXLAN（VNI = 网络 ID）；
 - C2/FIX 公网接入已用静态路由实现；
 - EVPN 路由模型已实现并驱动部分静态表项，真实 BGP/EVPN 控制面尚未实现。
 
@@ -164,7 +165,7 @@ Python 控制面           负责生成并下发 E 的静态 P4 表项、配置 
 | S2_bj / S2_sh / S2_gz / S2_cd | OVS | 站点接入交换机，上行拒绝并行网络 VLAN |
 | C_bj / C_sh / C_gz / C_cd | Linux netns | 传统核心路由器，IPv6 转发/静态路由 |
 | A_bj / A_sh / A_gz / A_cd | Linux netns | 传统汇聚路由器 |
-| cl-* | Linux netns | 云计算服务器，每站点 2 台，每台 2 个 macvlan 端点 |
+| cl-* | Linux netns | 云计算服务器，每站点 2 台（同一物理机），每台宿主机桥 + VXLAN + 2 个 VM 端点 |
 | pub_border / fix | Linux netns | 公网边界，BGP/静态路由、前缀过滤；`pub_border` 是短名，避免接口名超过 15 字符 |
 
 这样：
@@ -199,7 +200,7 @@ Python 控制面           负责生成并下发 E 的静态 P4 表项、配置 
               E/A/S1/S2 ...   E/A/S1/S2
                   |              |
                 cloud          cloud
-             (一台主机，v3501~v3504 VLAN 子接口)
+             (两台 PM 跑在同一台物理机上)
 ```
 
 站点间核心链路直接使用 FITI 实际拓扑：
@@ -209,9 +210,14 @@ Python 控制面           负责生成并下发 E 的静态 P4 表项、配置 
 - 43 条 FITI 链路对应站点 C 路由器之间的链路；
 - C 路由按 FITI 图的最短路径计算下一跳；
 - `C_bj` 同时连接公网边界；
-- 每站点 2 台云服务器，每台通过 S1/S2 trunk 上的 VLAN 子接口区分切片；
-- 每台云主机在每个 VLAN 子接口上创建 2 个 macvlan 端点，每端点独立路由表；
-  同站点端点之间由 S1 二层转发，出站点仍为 VLAN；
+- 每站点 2 台云服务器（PM），都在同一台物理机上；每台一个
+  `vlan_filtering=1` 的 Linux bridge（顶替物理机内的 OVS）；
+- 每个 VM 是一条 veth：VM 侧（`ep_*`）持地址/MAC 和独立策略路由表，
+  bridge 侧（`tp_*`）是 pvid = 业务 VLAN 的 access 口；
+- 每个网络一个 VXLAN 设备（`vx_*`，VNI = 网络 ID），隧道对端是本站点另一台
+  PM，underlay 用 `fd00:0:{站点}:9::1/::2` + 本机 veth，报文不出物理机；
+- 同站点跨 PM 的流量走 VXLAN，同 PM 的两个 VM 由桥直接转交；
+  出站点仍是 VLAN（PM-A 的 `eth0` 直接进桥，由桥打 tag）→ SRv6；
 - 每站点 `E` 是 BMv2/P4，`S1`/`S2` 是 OVS，`C`/`A`/cloud 是 netns；
 - L3VPN 网络 1/2 覆盖全部 41 站点；
 - L2VPN 网络 3/4 覆盖全部 41 站点；已知单播按远端 MAC 选择 SID，BUM

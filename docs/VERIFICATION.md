@@ -7,7 +7,7 @@
 ```bash
 make parallel-stop      # 清理旧实例
 make verify-dry         # 免 root，只校验用例与配置
-make verify-min         # 4 站点，39 条用例（故障用例需 --tag faults）
+make verify-min         # 4 站点，40 条用例（故障用例需 --tag faults）
 make verify-full        # 41 站点
 ```
 
@@ -50,7 +50,7 @@ IPv6 接口 down 之后地址和路由会被删除，up 也不会自动恢复，
 
 | 文件 | 内容 | 数量 |
 | --- | --- | --- |
-| `01-reachability.yaml` | L3VPN/L2VPN 同网络互通、多端点、BUM、公网、隧道报文格式 | 16 |
+| `01-reachability.yaml` | L3VPN/L2VPN 同网络互通、多端点、VXLAN、BUM、公网、隧道报文格式 | 17 |
 | `02-isolation.yaml` | 跨网络必须 100% 丢包 | 4 |
 | `03-vlan.yaml` | S1 放行、S2 拒绝并行 VLAN | 4 |
 | `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 9 |
@@ -70,7 +70,7 @@ cases:
     steps:
       - type: ping
         node: cl_bj
-        iface: v3501
+        iface: ep_bj_1_1_1
         target: 240a:a806:1:2::10
         expect: pass
     teardown: []
@@ -123,9 +123,9 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 
 | 配置 | 规模 | 结果 | 说明 |
 | --- | --- | --- | --- |
-| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 39/39 通过 | 用例耗时约 63 秒 |
+| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 40/40 通过 | 用例耗时约 69 秒 |
 | `parallel-min.json --tag faults` | 同上 | 1/1 通过 | netem 注入 100% 丢包后恢复 |
-| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 39/39 通过 | 用例耗时约 68 秒，峰值内存约 4.2 GB |
+| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 40/40 通过 | 用例耗时约 75 秒，峰值内存约 4.5 GB |
 
 失败用例会自动 dump 相关节点的 `ip -6 route/rule/addr` 和 P4 表项，
 放在 `runs/<时间戳>/evidence/`。
@@ -142,6 +142,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | L2VPN 同广播域 | `l2vpn-*` | ping |
 | L2VPN VNI 隔离 | `iso-l2-net3-to-net4` | ping 100% loss |
 | L2VPN 隧道内层不带业务 VLAN | `l2-tunnel-no-inner-vlan` | `C_bj` 抓 SRv6 包，内层无 `vlan` |
+| 同站点流量走 VXLAN | `vxlan-intra-site` | `cl_bj_1` 抓 `udp 4789`，VNI = 网络 ID |
 | 真实业务流量（TCP/HTTP） | `tcp-*`、`http-*` | iperf 传输量非零、curl 200 + 1MB |
 | 端点 MTU 覆盖 SRv6 开销 | `mtu-endpoint-vs-srv6` | 1352 字节通、1400 字节被拒 |
 | BUM 复制 | `bum-net3` | ff02::1 |
@@ -152,6 +153,26 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | 动态路由增删 | `evpn-*-add-withdraw` | agent + 表项 |
 | BGP EVPN 会话 | 无 | 未实现 |
 | 链路故障收敛 | `link-down-bj-tjn` | 只能验证 down/up，不做收敛 |
+
+## 宿主机 VXLAN 建模
+
+站点内两台 PM 都在同一台物理机上，PM 之间用 VXLAN 互通（VNI = 网络 ID），
+两个 VTEP 的 local/remote 是 `fd00:0:{站点}:9::1` 和 `::2`，报文只在本机
+veth 上转一圈：
+
+- 每台 PM 一个 `vlan_filtering=1` 的 Linux bridge，顶替物理机里的 OVS；
+- 每个 VM 一条 veth：VM 侧（`ep_*`）持地址和策略路由表，bridge 侧（`tp_*`）
+  是 pvid = 业务 VLAN 的 access 口；
+- 每个网络一个 VXLAN 设备（`vx_*`），桥里配 pvid/untagged，隧道内层帧不带 VLAN；
+- 静态 FDB：本机 VM MAC 指向自己的 tap 口，对端 PM 的 VM MAC 指向 VXLAN 口；
+- 只有 PM-A 有业务 VLAN 上联（`eth0` 直接进桥，由桥打 tag），PM-B 的站外
+  流量先经 VXLAN 到 PM-A 再出站点，避免 S1 上出现重复帧；
+- 手工复核：
+
+```bash
+sudo ip netns exec <cl_bj_1 的 ns> bridge fdb show | grep 02:01:00:01:02:01
+sudo ip netns exec <cl_bj_1 的 ns> tcpdump -i any -nn 'udp port 4789'
+```
 
 ## 业务流量用例
 
@@ -176,7 +197,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | VLAN 接入与过滤 | 线速转发、队列、缓存 |
 | VRF/VSI 隔离 | 真实 BGP 邻居与 NLRI |
 | SRv6 封装/解封装语义 | SRv6 压缩 SID、TE |
-| 宿主机多端点（macvlan）接入 | 宿主机 OVS/VXLAN 段、大规模 VTEP |
+| 宿主机桥 + VXLAN（VNI 隔离） | 真实 OVS/VTEP 实现、大规模 VTEP、硬件卸载 |
 | 业务可达与 TCP/HTTP 传输 | 吞吐、时延、抖动（BMv2 软件转发） |
 | 表项内容与容量 | 控制面收敛时间 |
 | 动态路由增删 | 多控制器主备 |

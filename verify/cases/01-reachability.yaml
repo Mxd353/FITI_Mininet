@@ -131,6 +131,27 @@ cases:
         target: 240a:a806:3:1::104
         expect: pass
 
+  - name: vxlan-intra-site
+    tags: [core, l3, vxlan]
+    requires_hosts: 2
+    description: 同站点跨 PM 的 VM 通信走 VXLAN（VNI = 网络 ID），隧道在本机 veth 上自环
+    steps:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'rm -f /tmp/vxcap.pcap; setsid timeout 8 tcpdump -i any -U -s0 -w /tmp/vxcap.pcap "udp port 4789" >/dev/null 2>&1 & sleep 1; echo CAPTURE_STARTED'
+        expect_contains: CAPTURE_STARTED
+      - type: ping
+        node: cl_bj_1
+        iface: 240a:a806:1:1::10
+        target: 240a:a806:1:1::20
+        expect: pass
+      - type: sleep
+        seconds: 3
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'tcpdump -r /tmp/vxcap.pcap -nn 2>/dev/null | grep -q VXLAN && tcpdump -r /tmp/vxcap.pcap -nn 2>/dev/null | grep -qE "vni 1(,|$)" && echo VXLAN_OK'
+        expect_contains: VXLAN_OK
+
   - name: l2-tunnel-no-inner-vlan
     tags: [core, l2, packet]
     requires_sites: [sh]

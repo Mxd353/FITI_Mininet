@@ -91,14 +91,38 @@ class ParallelConfig:
         """L2VPN uses one flat /64 so all member sites share a broadcast domain."""
         return ipaddress.IPv6Network('240a:a806:%d:1::/64' % network.id)
 
-    def vlan_ifname(self, network: Network) -> str:
-        """Short Linux VLAN subinterface name inside the cloud netns."""
-        return 'v%d' % network.vlan
-
     def endpoint_ifname(self, site: Site, host: int, endpoint: int,
                         network: Network) -> str:
         return 'ep_%s_%d_%d_%d' % (site.abbr, int(host), int(endpoint),
                                    network.id)
+
+    def tap_ifname(self, site: Site, host: int, endpoint: int,
+                   network: Network) -> str:
+        """Bridge-side end of the veth pair that carries one VM NIC."""
+        return 'tp_%s_%d_%d_%d' % (site.abbr, int(host), int(endpoint),
+                                   network.id)
+
+    def bridge_name(self, site: Site, host: int) -> str:
+        """Per-PM bridge; stands in for the OVS inside the physical host."""
+        return 'br_%s_%d' % (site.abbr, int(host))
+
+    def vxlan_ifname(self, site: Site, host: int,
+                     network: Network) -> str:
+        return 'vx_%s_%d_%d' % (site.abbr, int(host), network.id)
+
+    @staticmethod
+    def underlay_address(site: Site, host: int) -> str:
+        """Host-overlay underlay address (PM to PM inside one site)."""
+        return 'fd00:0:%d:9::%d' % (int(site.id), int(host))
+
+    def underlay_peer(self, host: int) -> Optional[int]:
+        """Peer PM index for the VXLAN tunnel, or None when there is one PM."""
+        host_id = int(host)
+        if int(self.hosts_per_site) < 2:
+            return None
+        if not 1 <= host_id <= 2:
+            return None
+        return 2 if host_id == 1 else 1
 
     def endpoint_table(self, network: Network, host: int,
                        endpoint: int) -> int:

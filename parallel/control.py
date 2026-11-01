@@ -333,41 +333,108 @@ def _set_addr(host, intf, address, noprefixroute=False):
 
 
 def _configure_cloud_host(net, cfg, site, host_id):
-    """Create the VLAN uplink and one macvlan endpoint per (host, slice)."""
+    """Build the host-side L2: PM bridge, a veth tap per VM, VXLAN to the peer.
+
+    每台 PM 一个开启 VLAN 过滤的 Linux bridge，顶替物理机内的 OVS：
+    每个 VM 一条 veth（VM 侧持地址/MAC，bridge 侧是 access 口），
+    每个网络一个 VXLAN 设备（VNI = 网络 ID），隧道对端是同一站点的另一台 PM
+    （两个 VTEP 都在本机，报文在 veth 上转一圈）。只有第一台 PM 有业务
+    VLAN 上联，其它 PM 的站外流量先经 VXLAN 到第一台 PM 再出站点。
+    """
     cloud = net.get(cloud_name(site, host_id))
     parent = _host_intf(cloud, s1_name(site))
-    # VLAN 子接口只做承载，IPv6 关掉：否则内核会在子接口上发 RS/MLD，
-    # 这些组播帧会进入业务的 VRF/广播域，被当成 BUM 复制到其它站点。
-    # macvlan 子接口不会继承 disable_ipv6，端点自己仍然启用 IPv6。
+    bridge = cfg.bridge_name(site, host_id)
+    peer_id = cfg.underlay_peer(host_id)
+
+    cloud.cmd('ip link del %s 2>/dev/null || true' % bridge)
+    _run_ip(cloud,
+            'ip link add name %s type bridge vlan_filtering 1' % bridge,
+            '创建宿主机桥')
+    _run_ip(cloud, 'ip link set dev %s mtu %d'
+            % (bridge, cfg.endpoint_mtu), '设置宿主机桥 MTU')
+    _run_ip(cloud, 'ip link set dev %s up' % bridge, '启用宿主机桥')
+    # 桥和承载口不发 RS/MLD，避免组播噪声进入业务广播域。
     cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % parent.name)
+    cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % bridge)
+
+    if host_id == 1:
+        cloud.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
+                  % parent.name)
+        _run_ip(cloud, 'ip link set dev %s up' % parent.name, '启用上联')
+
+    underlay = None
+    if peer_id is not None:
+        underlay = _host_intf(cloud, cloud_name(site, peer_id))
+        _run_ip(cloud, 'ip link set dev %s up' % underlay.name,
+                '启用 host underlay')
+        _set_addr(cloud, underlay,
+                  cfg.underlay_address(site, host_id) + '/64')
+
     for network in cfg.networks_for_site(site):
-        uplink = cfg.vlan_ifname(network)
-        cloud.cmd('ip link del %s 2>/dev/null || true' % uplink)
-        _run_ip(cloud,
-                'ip link add link %s name %s type vlan id %d'
-                % (parent.name, uplink, network.vlan), '创建 VLAN 子接口')
-        cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % uplink)
-        _run_ip(cloud, 'ip link set dev %s up' % uplink, '启用 VLAN 子接口')
         for endpoint in cfg.endpoint_ids():
-            ifname = cfg.endpoint_ifname(site, host_id, endpoint, network)
-            cloud.cmd('ip link del %s 2>/dev/null || true' % ifname)
+            ep = cfg.endpoint_ifname(site, host_id, endpoint, network)
+            tap = cfg.tap_ifname(site, host_id, endpoint, network)
+            mac = cfg.cloud_mac(network, site, host_id, endpoint)
+            cloud.cmd('ip link del %s 2>/dev/null || true' % ep)
+            _run_ip(cloud, 'ip link add %s type veth peer name %s'
+                    % (ep, tap), '创建端点 veth')
+            _run_ip(cloud, 'ip link set dev %s master %s' % (tap, bridge),
+                    '端点接入宿主机桥')
             _run_ip(cloud,
-                    'ip link add link %s name %s type macvlan mode bridge'
-                    % (uplink, ifname), '创建 macvlan 端点')
-            _run_ip(cloud,
-                    'ip link set dev %s address %s'
-                    % (ifname, cfg.cloud_mac(network, site, host_id,
-                                             endpoint)), '设置端点 MAC')
+                    'bridge vlan add dev %s vid %d pvid untagged'
+                    % (tap, network.vlan), '配置 tap 的 VLAN')
+            cloud.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
+                      % tap)
+            _run_ip(cloud, 'ip link set dev %s up' % tap, '启用 tap')
             # SRv6 封装要占 64B（L3）/78B（L2），端点 MTU 留出余量，
             # 否则大包封装后超过 1500 被 BMv2 丢弃，且没有 ICMPv6 PTB。
             _run_ip(cloud,
-                    'ip link set dev %s mtu %d'
-                    % (ifname, cfg.endpoint_mtu), '设置端点 MTU')
-            _run_ip(cloud, 'ip link set dev %s up' % ifname, '启用端点')
+                    'ip link set dev %s address %s mtu %d'
+                    % (ep, mac, cfg.endpoint_mtu), '配置端点 MAC/MTU')
+            _run_ip(cloud, 'ip link set dev %s up' % ep, '启用端点')
+            _run_ip(cloud, 'bridge fdb replace %s dev %s master static'
+                    % (mac, tap), '本机 VM 静态 FDB')
+
+        if underlay is not None:
+            vx = cfg.vxlan_ifname(site, host_id, network)
+            cloud.cmd('ip link del %s 2>/dev/null || true' % vx)
+            _run_ip(cloud,
+                    'ip link add %s type vxlan id %d local %s remote %s '
+                    'dev %s dstport 4789 nolearning'
+                    % (vx, network.id,
+                       cfg.underlay_address(site, host_id),
+                       cfg.underlay_address(site, peer_id),
+                       underlay.name), '创建 VXLAN')
+            _run_ip(cloud, 'ip link set dev %s mtu %d'
+                    % (vx, cfg.endpoint_mtu), '设置 VXLAN MTU')
+            _run_ip(cloud, 'ip link set dev %s master %s' % (vx, bridge),
+                    'VXLAN 接入宿主机桥')
+            _run_ip(cloud,
+                    'bridge vlan add dev %s vid %d pvid untagged'
+                    % (vx, network.vlan), '配置 VXLAN 口 VLAN')
+            cloud.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
+                      % vx)
+            _run_ip(cloud, 'bridge link set dev %s learning off' % vx,
+                    '关闭 VXLAN 口学习')
+            _run_ip(cloud, 'ip link set dev %s up' % vx, '启用 VXLAN')
+            for endpoint in cfg.endpoint_ids():
+                peer_mac = cfg.cloud_mac(network, site, peer_id, endpoint)
+                _run_ip(cloud,
+                        'bridge fdb replace %s dev %s master static'
+                        % (peer_mac, vx), '对端 VM 静态 FDB')
+
+        if host_id != 1:
+            continue
+        # 上联用 trunk 口的原设备（eth0）直接进桥，由桥按 VID 打标签；
+        # 不能再套一层 VLAN 子接口，否则桥和子接口各打一次 tag（QinQ）。
+        _run_ip(cloud, 'ip link set dev %s master %s'
+                % (parent.name, bridge), '上联接入宿主机桥')
+        _run_ip(cloud, 'bridge vlan add dev %s vid %d'
+                % (parent.name, network.vlan), '配置上联 tagged VLAN')
 
 
 def _configure_cloud_interfaces(net, cfg):
-    """Configure all cloud hosts and macvlan endpoints in parallel."""
+    """Configure all cloud hosts (bridge, taps, VXLAN) in parallel."""
     tasks = [(site, host_id)
              for site in cfg.sites for host_id in cfg.host_ids()]
     workers = min(MAX_WORKERS, len(tasks)) or 1
@@ -618,7 +685,7 @@ def _configure_public(net, cfg):
 
 def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
     names = runtime_names(json_path or cfg.p4_json)
-    print('*** 配置云主机和 macvlan 端点')
+    print('*** 配置云主机、宿主机桥和 VXLAN')
     _configure_cloud_interfaces(net, cfg)
     switch_ports = _port_maps(net, cfg)
     macs = _site_macs(net, cfg)

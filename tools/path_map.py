@@ -52,17 +52,75 @@ def build_segments(cfg: ParallelConfig, network, src, dst):
         segments.append({'from': left, 'to': right,
                          'encap': encap, 'note': note})
 
+    def tap(site, host):
+        return cfg.tap_ifname(site, host, 1, network)
+
+    def tunnel_note(site, host, peer):
+        return ('主机 overlay：%s → %s（本机 veth，自环）'
+                % (cfg.underlay_address(site, host),
+                   cfg.underlay_address(site, peer)))
+
+    def exit_host(site, host, name):
+        """VM → tap → 桥 →（必要时 VXLAN）→ 站点交换机。"""
+        add(name, tap(site, host), 'untagged', 'VM 网卡，普通 IP 报文')
+        add(tap(site, host), cfg.bridge_name(site, host), 'untagged',
+            '宿主机桥 access 口（VLAN %d）' % vlan)
+        bridge = cfg.bridge_name(site, host)
+        if host != 1:
+            peer = cfg.bridge_name(site, 1)
+            add(bridge, peer, 'VXLAN VNI %d' % network.id,
+                tunnel_note(site, host, 1))
+            bridge = peer
+        add(bridge, 'S1_%s' % site.abbr, 'VLAN %d' % vlan,
+            '桥上联到站点交换机')
+
+    def enter_host(site, host, name):
+        """站点交换机 →（必要时 VXLAN）→ 桥 → tap → VM。"""
+        bridge = cfg.bridge_name(site, host)
+        if host != 1:
+            peer = cfg.bridge_name(site, 1)
+            add('S1_%s' % site.abbr, peer, 'VLAN %d' % vlan,
+                '交付到本站点第一台 PM')
+            add(peer, bridge, 'VXLAN VNI %d' % network.id,
+                tunnel_note(site, 1, host))
+        else:
+            add('S1_%s' % site.abbr, bridge, 'VLAN %d' % vlan,
+                '交付到目的 PM 的桥')
+        add(bridge, tap(site, host), 'untagged', '宿主机桥 access 口')
+        add(tap(site, host), name, 'untagged', '交付给目的 VM')
+
     if src_site.abbr == dst_site.abbr:
-        add(src_name, 'S1_%s' % src_site.abbr,
-            'VLAN %d' % vlan, '接入')
-        add('S1_%s' % src_site.abbr, dst_name, 'VLAN %d' % vlan,
-            '同站点二层转发，不经过 E；文档中的 VXLAN 段未建模')
+        if src_host == dst_host:
+            add(src_name, tap(src_site, src_host), 'untagged',
+                'VM 网卡，普通 IP 报文')
+            add(tap(src_site, src_host),
+                cfg.bridge_name(src_site, src_host), 'untagged',
+                '宿主机桥 access 口（VLAN %d）' % vlan)
+            add(cfg.bridge_name(src_site, src_host),
+                tap(dst_site, dst_host), 'untagged',
+                '同一台 PM 内的桥转交')
+            add(tap(dst_site, dst_host), dst_name, 'untagged',
+                '交付给目的 VM')
+        else:
+            add(src_name, tap(src_site, src_host), 'untagged',
+                'VM 网卡，普通 IP 报文')
+            add(tap(src_site, src_host),
+                cfg.bridge_name(src_site, src_host), 'untagged',
+                '宿主机桥 access 口（VLAN %d）' % vlan)
+            add(cfg.bridge_name(src_site, src_host),
+                cfg.bridge_name(dst_site, dst_host),
+                'VXLAN VNI %d' % network.id,
+                tunnel_note(src_site, src_host, dst_host))
+            add(cfg.bridge_name(dst_site, dst_host),
+                tap(dst_site, dst_host), 'untagged', '对端 PM 的 access 口')
+            add(tap(dst_site, dst_host), dst_name, 'untagged',
+                '交付给目的 VM')
         return segments, {
             'inner': '%s → %s' % (inner_src, inner_dst),
             'note': 'same-site',
         }
 
-    add(src_name, 'S1_%s' % src_site.abbr, 'VLAN %d' % vlan, '接入')
+    exit_host(src_site, src_host, src_name)
     add('S1_%s' % src_site.abbr, 'E_%s' % src_site.abbr,
         'VLAN %d' % vlan, '上行到 PE')
 
@@ -75,7 +133,7 @@ def build_segments(cfg: ParallelConfig, network, src, dst):
         sa = cfg.l2_sid(network, src_site)
         da = cfg.l2_sid(network, dst_site)
         encap = 'SRv6 L2  SA=%s  DA=%s' % (sa, da)
-        decap_note = '解封装后由 S1 按目的 MAC 转发'
+        decap_note = '解封装后按 VSI 的 VLAN 送 S1'
 
     add('E_%s' % src_site.abbr, 'C_%s' % src_site.abbr,
         encap, 'PE 封装并交给核心')
@@ -89,7 +147,7 @@ def build_segments(cfg: ParallelConfig, network, src, dst):
         'IPv6 外层（SRv6）', '到达目的 PE')
     add('E_%s' % dst_site.abbr, 'S1_%s' % dst_site.abbr,
         'VLAN %d' % vlan, decap_note)
-    add('S1_%s' % dst_site.abbr, dst_name, 'VLAN %d' % vlan, '交付')
+    enter_host(dst_site, dst_host, dst_name)
 
     return segments, {
         'inner': '%s → %s' % (inner_src, inner_dst),

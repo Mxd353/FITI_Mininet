@@ -145,9 +145,14 @@ class ParallelTopology(Topo):
 
         # Several cloud hosts per site.  Each uses 802.1Q VLAN
         # subinterfaces on the S1/S2 trunk to distinguish slices.
+        # 同一站点的云主机之间再拉一条 host underlay 链路，用来跑 VXLAN：
+        # 两个 VTEP 都在本机，隧道在 veth 上转一圈，不产生站外流量。
         for site in cfg.sites:
             for host_id in cfg.host_ids():
                 host = cloud_name(site, host_id)
                 self.addHost(host)
                 self.addLink(host, s1_name(site))
                 self.addLink(host, s2_name(site))
+            hosts = [cloud_name(site, host_id) for host_id in cfg.host_ids()]
+            for index in range(0, len(hosts) - 1, 2):
+                self.addLink(hosts[index], hosts[index + 1])

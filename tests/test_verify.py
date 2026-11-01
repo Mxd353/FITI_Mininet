@@ -105,7 +105,7 @@ class RunnerLogicTest(unittest.TestCase):
         cfg = load_config(_path('configs', 'parallel-min.json'))
         runner = CaseRunner(_FakeNet(loss), cfg)
         case = Case(name='t', steps=[{
-            'type': 'ping', 'node': 'cl_bj', 'iface': 'v3501',
+            'type': 'ping', 'node': 'cl_bj', 'iface': 'ep_bj_1_1_1',
             'target': '240a:a806:1:2::10', 'expect': expect,
             'retries': 0,
         }], tags=('t',))
