@@ -89,6 +89,7 @@ struct headers_t {
     ipv6_t     ipv6;
     srh_t      srh;
     srh_segment_t segment0;
+    srh_segment_t segment1;
     udp_t      udp;
     vxlan_t    vxlan;
     ethernet_t inner_ethernet;
@@ -104,6 +105,8 @@ struct metadata_t {
     bit<1>  core_port;
     bit<1>  l2_mode;
     bit<1>  l2_bum;
+    bit<1>  transit;
+    bit<1>  bad_srh;
 }
 
 parser ParserImpl(packet_in packet,
@@ -139,6 +142,27 @@ parser ParserImpl(packet_in packet,
     state parse_srh {
         packet.extract(hdr.srh);
         packet.extract(hdr.segment0);
+        // hdrExtLen = 2 -> 1 段（BE）；4 -> 2 段（带一个 waypoint）。
+        // 其它长度（多段压缩/3 段以上）当前不支持，标记后丢弃。
+        transition select(hdr.srh.hdrExtLen) {
+            2: parse_srh_inner;
+            4: parse_segment1;
+            default: parse_srh_bad;
+        }
+    }
+
+    state parse_srh_bad {
+        // 只支持 1 段（BE）和 2 段（一个 waypoint）；其它长度标记后丢弃。
+        meta.bad_srh = 1;
+        transition accept;
+    }
+
+    state parse_segment1 {
+        packet.extract(hdr.segment1);
+        transition parse_srh_inner;
+    }
+
+    state parse_srh_inner {
         transition select(hdr.srh.nextHdr) {
             IPPROTO_IPV6: parse_inner_ipv6;
             IPPROTO_ETHERNET: parse_inner_ethernet;
@@ -319,12 +343,104 @@ control IngressImpl(inout headers_t hdr,
         hdr.srh.tag = 0;
         hdr.segment0.setValid();
         hdr.segment0.sid = dst_sid;
+        hdr.segment1.setInvalid();
 
         hdr.vlan.setInvalid();
         hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
         standard_metadata.egress_spec = port;
+    }
+
+    // 多段封装：segment[0] = 最终 SID，segment[1] = waypoint SID，
+    // 外层 DA = segment[segmentsLeft] = waypoint SID（RFC 8754 顺序）。
+    action srv6_encap_te(bit<128> src_sid, bit<128> final_sid,
+                         bit<128> via_sid, bit<48> smac, bit<48> dmac,
+                         bit<9> port) {
+        hdr.inner_ipv6.setValid();
+        hdr.inner_ipv6.version = hdr.ipv6.version;
+        hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
+        hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
+        hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
+        hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
+        hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
+        hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
+        hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+
+        hdr.ipv6.version = 6;
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
+        hdr.ipv6.flowLabel = 0;
+        // 外层 = 40B IPv6 + 8B SRH + 2×16B segment + 内层
+        hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + 80;
+        hdr.ipv6.nextHdr = IPPROTO_SRH;
+        hdr.ipv6.hopLimit = 64;
+        hdr.ipv6.srcAddr = src_sid;
+        hdr.ipv6.dstAddr = via_sid;
+
+        hdr.srh.setValid();
+        hdr.srh.nextHdr = IPPROTO_IPV6;
+        hdr.srh.hdrExtLen = 4;
+        hdr.srh.routingType = SRH_ROUTING_TYPE;
+        hdr.srh.segmentsLeft = 1;
+        hdr.srh.lastEntry = 1;
+        hdr.srh.flags = 0;
+        hdr.srh.tag = 0;
+        hdr.segment0.setValid();
+        hdr.segment0.sid = final_sid;
+        hdr.segment1.setValid();
+        hdr.segment1.sid = via_sid;
+
+        hdr.vlan.setInvalid();
+        hdr.ethernet.srcAddr = smac;
+        hdr.ethernet.dstAddr = dmac;
+        hdr.ethernet.etherType = ETHERTYPE_IPV6;
+        standard_metadata.egress_spec = port;
+    }
+
+    // End：waypoint 上把 segmentsLeft 减一、DA 换成下一段
+    action srv6_end() {
+        if (hdr.ipv6.hopLimit <= 1) {
+            mark_to_drop(standard_metadata);
+        } else {
+            hdr.ipv6.hopLimit = hdr.ipv6.hopLimit - 1;
+            hdr.srh.segmentsLeft = hdr.srh.segmentsLeft - 1;
+            if (hdr.srh.segmentsLeft == 0) {
+                hdr.ipv6.dstAddr = hdr.segment0.sid;
+            } else {
+                hdr.ipv6.dstAddr = hdr.segment1.sid;
+            }
+            meta.transit = 1;
+        }
+    }
+
+    action forward_sid(bit<9> port, bit<48> smac, bit<48> dmac) {
+        standard_metadata.egress_spec = port;
+        hdr.ethernet.srcAddr = smac;
+        hdr.ethernet.dstAddr = dmac;
+    }
+
+    table transit_sid {
+        key = {
+            hdr.ipv6.dstAddr: lpm;
+        }
+        actions = {
+            srv6_end;
+            drop;
+        }
+        size = 1024;
+        default_action = drop;
+    }
+
+    table sid_fib {
+        key = {
+            hdr.ipv6.dstAddr: lpm;
+        }
+        actions = {
+            forward_sid;
+            drop;
+        }
+        size = 1024;
+        default_action = drop;
     }
 
     action forward_l3(bit<9> port, bit<48> smac, bit<48> dmac,
@@ -356,6 +472,7 @@ control IngressImpl(inout headers_t hdr,
         actions = {
             forward_l3;
             srv6_encap;
+            srv6_encap_te;
             drop;
         }
         size = 65536;
@@ -387,6 +504,7 @@ control IngressImpl(inout headers_t hdr,
         }
         hdr.srh.setInvalid();
         hdr.segment0.setInvalid();
+        hdr.segment1.setInvalid();
         hdr.inner_ipv6.setInvalid();
         standard_metadata.egress_spec = port;
     }
@@ -438,6 +556,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.srh.tag = 0;
         hdr.segment0.setValid();
         hdr.segment0.sid = dst_sid;
+        hdr.segment1.setInvalid();
 
         hdr.vlan.setInvalid();
         hdr.ethernet.srcAddr = smac;
@@ -482,6 +601,7 @@ control IngressImpl(inout headers_t hdr,
         }
         hdr.srh.setInvalid();
         hdr.segment0.setInvalid();
+        hdr.segment1.setInvalid();
         hdr.udp.setInvalid();
         hdr.vxlan.setInvalid();
         hdr.inner_ethernet.setInvalid();
@@ -688,20 +808,33 @@ control IngressImpl(inout headers_t hdr,
         meta.core_port = 0;
         meta.l2_mode = 0;
         meta.l2_bum = 0;
+        meta.transit = 0;
+        meta.bad_srh = 0;
         meta.ingress_port = standard_metadata.ingress_port;
 
         port_cfg.apply();
-        if (meta.port_ok == 1) {
+        if (meta.bad_srh == 1) {
+            drop();
+        }
+        if (meta.port_ok == 1 && meta.bad_srh == 0) {
             if (hdr.vxlan.isValid()) {
                 // Outer VXLAN packet from the remote E router.
                 vxlan_map.apply();
             } else if (hdr.srh.isValid()) {
-                // SRv6 packet destined to a local SID.  For L3VPN the
-                // decap action records the VRF and the inner destination
-                // is looked up again so it is delivered to the owning host.
-                local_sid.apply();
-                if (meta.vrf_id != 0 && hdr.ipv6.isValid()) {
-                    l3_fib.apply();
+                if (hdr.srh.segmentsLeft > 0) {
+                    // SRv6 transit（waypoint）：改写 SL/DA 后再查 SID 路由。
+                    transit_sid.apply();
+                    if (meta.transit == 1) {
+                        sid_fib.apply();
+                    }
+                } else {
+                    // SRv6 packet destined to a local SID.  For L3VPN the
+                    // decap action records the VRF and the inner destination
+                    // is looked up again so it is delivered to the owning host.
+                    local_sid.apply();
+                    if (meta.vrf_id != 0 && hdr.ipv6.isValid()) {
+                        l3_fib.apply();
+                    }
                 }
             } else {
                 if (meta.core_port == 1) {
@@ -794,6 +927,7 @@ control EgressImpl(inout headers_t hdr,
         hdr.srh.tag = 0;
         hdr.segment0.setValid();
         hdr.segment0.sid = dst_sid;
+        hdr.segment1.setInvalid();
 
         hdr.vlan.setInvalid();
         hdr.ethernet.srcAddr = smac;
@@ -857,7 +991,10 @@ control EgressImpl(inout headers_t hdr,
             l2_rep_sid.apply();
         }
         egress_port.apply();
-        if (meta.ingress_port == standard_metadata.egress_port) {
+        // 防环：不要把帧从入口原样送回。SRv6 transit（waypoint）
+        // 例外——它必须从进来的核心口再发出去。
+        if (meta.transit == 0 &&
+            meta.ingress_port == standard_metadata.egress_port) {
             mark_to_drop(standard_metadata);
         }
     }
@@ -876,6 +1013,7 @@ control DeparserImpl(packet_out packet, in headers_t hdr) {
         packet.emit(hdr.ipv6);
         packet.emit(hdr.srh);
         packet.emit(hdr.segment0);
+        packet.emit(hdr.segment1);
         packet.emit(hdr.udp);
         packet.emit(hdr.vxlan);
         packet.emit(hdr.inner_ethernet);

@@ -171,10 +171,19 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                 if local_route is None:
                     raise RuntimeError('站点 %s 缺少网络 %d 的本地 EVPN 路由'
                                        % (site.abbr, network.id))
-                _add(commands[e], names, 'l3_fib', 'srv6_encap',
-                     [network.id, route.prefix],
-                     [local_route.sid, route.sid,
-                      macs[site.abbr]['e_c'], c_dmac, c_port])
+                via = cfg.te_via(network, site, target)
+                if via is not None:
+                    # 静态 TE：segment list = [目的 SID, waypoint SID]
+                    _add(commands[e], names, 'l3_fib', 'srv6_encap_te',
+                         [network.id, route.prefix],
+                         [local_route.sid, route.sid,
+                          cfg.srv6_sid(network, via),
+                          macs[site.abbr]['e_c'], c_dmac, c_port])
+                else:
+                    _add(commands[e], names, 'l3_fib', 'srv6_encap',
+                         [network.id, route.prefix],
+                         [local_route.sid, route.sid,
+                          macs[site.abbr]['e_c'], c_dmac, c_port])
 
         # Per-host /128 routes: decapsulated and public traffic is delivered
         # to the owning cloud host through a second l3_fib lookup.
@@ -212,6 +221,19 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             _add(commands[e], names, 'l3_fib', 'forward_l3',
                  [network.id, '2001:255:0:100::/64'],
                  [c_port, macs[site.abbr]['e_c'], c_dmac, 0])
+
+        # SRv6 TE waypoint：本机 SID 在 segmentsLeft > 0 时做 End，
+        # 改写后的目的 SID 按站点 /48 送核心口。
+        for network in cfg.l3_networks_for_site(site):
+            if all(item.abbr != site.abbr
+                   for item in cfg.te_waypoints(network)):
+                continue
+            _add(commands[e], names, 'transit_sid', 'srv6_end',
+                 ['%s/128' % cfg.srv6_sid(network, site)])
+            for target in cfg.network_sites(network):
+                _add(commands[e], names, 'sid_fib', 'forward_sid',
+                     [cfg.underlay_network(target)],
+                     [c_port, macs[site.abbr]['e_c'], c_dmac])
 
         # L2VPN: SRv6 by default; VXLAN remains available as a fallback.
         # Known unicast is keyed by remote cloud MAC.  BUM traffic uses a

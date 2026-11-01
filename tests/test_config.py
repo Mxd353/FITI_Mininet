@@ -22,6 +22,7 @@ class IfnameLengthTest(unittest.TestCase):
                   encoding='utf-8') as handle:
             raw = json.load(handle)
         raw['sites'][0]['abbr'] = abbr
+        raw.pop('te_paths', None)
         raw['fiti_topology'] = _path('configs', 'fiti.json')
         for network in raw['networks']:
             network['sites'] = [abbr if item == 'bj' else item

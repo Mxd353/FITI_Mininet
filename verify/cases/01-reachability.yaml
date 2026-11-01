@@ -152,6 +152,27 @@ cases:
         command: sh -c 'tcpdump -r /tmp/vxcap.pcap -nn 2>/dev/null | grep -q VXLAN && tcpdump -r /tmp/vxcap.pcap -nn 2>/dev/null | grep -qE "vni 1(,|$)" && echo VXLAN_OK'
         expect_contains: VXLAN_OK
 
+  - name: srv6-te-waypoint
+    tags: [core, l3, te]
+    requires_sites: [sh, jnn]
+    description: 静态 TE 路径经济南 E 中转，waypoint 上 segmentsLeft 1→0 并改写 DA
+    steps:
+      - type: exec
+        node: C_jnn
+        command: sh -c 'rm -f /tmp/te.pcap; setsid timeout 10 tcpdump -i any -U -s0 -w /tmp/te.pcap "ip6 and proto 43" >/dev/null 2>&1 & sleep 1; echo CAPTURE_STARTED'
+        expect_contains: CAPTURE_STARTED
+      - type: ping
+        node: cl_bj_1
+        iface: 240a:a806:1:1::10
+        target: 240a:a806:1:2::10
+        expect: pass
+      - type: sleep
+        seconds: 3
+      - type: exec
+        node: C_jnn
+        command: sh -c 'tcpdump -r /tmp/te.pcap -nn >/tmp/te.txt 2>/dev/null; grep -Eq "fd00:0:1:1::1:1 > fd00:0:23:1::1:1.*segleft=1" /tmp/te.txt && grep -Eq "fd00:0:1:1::1:1 > fd00:0:2:1::1:1.*segleft=0" /tmp/te.txt && echo TE_OK'
+        expect_contains: TE_OK
+
   - name: l2-tunnel-no-inner-vlan
     tags: [core, l2, packet]
     requires_sites: [sh]

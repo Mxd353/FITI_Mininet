@@ -234,6 +234,21 @@ sudo ovs-appctl fdb/show S1_bj
 每个网络可以用 `sites` 指定成员站点。当前扩展配置为了覆盖全部节点，
 4 个网络都选择了全部 41 站点。
 
+其他可选字段：
+
+```json
+"hosts_per_site": 2,
+"endpoints_per_host": 2,
+"endpoint_mtu": 1400,
+"te_paths": [
+    {"network": 1, "src": "bj", "dst": "sh", "via": "jnn"}
+]
+```
+
+`te_paths` 是静态 SRv6 TE 路径：入口站点用两段 SRH（目的 SID + waypoint SID），
+waypoint 站点的 E 做 `End`（`segmentsLeft--`、改写 DA）后再转发出去。
+只支持 L3VPN、只支持一个 waypoint。
+
 `configs/parallel-min.json` 是 4 站点验证子集：
 
 ```text
@@ -356,6 +371,16 @@ cl_bj_1 ping6 -c 3 -I ep_bj_1_1_3 ff02::1
 ```text
 cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 2001:255:0:100::2000
 ```
+
+### SRv6 TE（经 waypoint）
+
+```text
+# 配置里 te_paths 指定 bj -> sh 经 jnn；在济南 C 上抓 SRv6 外层
+C_jnn tcpdump -i any -nn 'ip6 and proto 43'
+cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:1:2::10
+```
+
+进 waypoint 时 `segleft=1`、DA 是济南 SID；出 waypoint 时 `segleft=0`、DA 改成上海 SID。
 
 ### 同站点 VXLAN
 
@@ -527,6 +552,7 @@ parallel_evpn_ctl.py        agent 客户端
 - 没有真实 BGP/EVPN 会话、Route Reflector 或 EVPN NLRI 编解码；
 - L2 BUM multicast group 是静态生成的；
 - VXLAN 回退模式只支持已知单播；
+- SRv6 TE 目前是静态配置（`te_paths`），只支持 L3VPN 和单个 waypoint；
 - 动态 agent 只支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；
 - 接入交换机是 OVS，L2 转发靠 MAC 学习，不是 EVPN 下发的静态 FIB；
 - 41 台 BMv2 仍然占用较多资源，全量启动较慢；

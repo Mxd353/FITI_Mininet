@@ -7,7 +7,7 @@
 ```bash
 make parallel-stop      # 清理旧实例
 make verify-dry         # 免 root，只校验用例与配置
-make verify-min         # 4 站点，40 条用例（故障用例需 --tag faults）
+make verify-min         # 4 站点，41 条用例（故障用例需 --tag faults）
 make verify-full        # 41 站点
 ```
 
@@ -50,7 +50,7 @@ IPv6 接口 down 之后地址和路由会被删除，up 也不会自动恢复，
 
 | 文件 | 内容 | 数量 |
 | --- | --- | --- |
-| `01-reachability.yaml` | L3VPN/L2VPN 同网络互通、多端点、VXLAN、BUM、公网、隧道报文格式 | 17 |
+| `01-reachability.yaml` | L3VPN/L2VPN 互通、多端点、VXLAN、SRv6 TE、BUM、公网、隧道报文格式 | 18 |
 | `02-isolation.yaml` | 跨网络必须 100% 丢包 | 4 |
 | `03-vlan.yaml` | S1 放行、S2 拒绝并行 VLAN | 4 |
 | `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 9 |
@@ -123,9 +123,9 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 
 | 配置 | 规模 | 结果 | 说明 |
 | --- | --- | --- | --- |
-| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 40/40 通过 | 用例耗时约 69 秒 |
+| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 41/41 通过 | 用例耗时约 75 秒 |
 | `parallel-min.json --tag faults` | 同上 | 1/1 通过 | netem 注入 100% 丢包后恢复 |
-| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 40/40 通过 | 用例耗时约 75 秒，峰值内存约 4.5 GB |
+| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 41/41 通过 | 用例耗时约 80 秒，峰值内存约 4.5 GB |
 
 失败用例会自动 dump 相关节点的 `ip -6 route/rule/addr` 和 P4 表项，
 放在 `runs/<时间戳>/evidence/`。
@@ -143,6 +143,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | L2VPN VNI 隔离 | `iso-l2-net3-to-net4` | ping 100% loss |
 | L2VPN 隧道内层不带业务 VLAN | `l2-tunnel-no-inner-vlan` | `C_bj` 抓 SRv6 包，内层无 `vlan` |
 | 同站点流量走 VXLAN | `vxlan-intra-site` | `cl_bj_1` 抓 `udp 4789`，VNI = 网络 ID |
+| SRv6 TE 经 waypoint | `srv6-te-waypoint` | waypoint C 上抓包，`segleft` 1→0、DA 改写 |
 | 真实业务流量（TCP/HTTP） | `tcp-*`、`http-*` | iperf 传输量非零、curl 200 + 1MB |
 | 端点 MTU 覆盖 SRv6 开销 | `mtu-endpoint-vs-srv6` | 1352 字节通、1400 字节被拒 |
 | BUM 复制 | `bum-net3` | ff02::1 |
@@ -175,6 +176,24 @@ veth 上转一圈：
 sudo ip netns exec <cl_bj_1 的 ns> bridge fdb show | grep 02:01:00:01:02:01
 sudo ip netns exec <cl_bj_1 的 ns> tcpdump -i any -nn 'udp port 4789'
 ```
+
+## SRv6 TE（静态多段）
+
+`configs/*.json` 的 `te_paths` 给某条 L3VPN 路径指定一个 waypoint 站点：
+
+```json
+"te_paths": [{"network": 1, "src": "bj", "dst": "sh", "via": "jnn"}]
+```
+
+- 入口 E：`l3_fib` 配 `srv6_encap_te`，`segment[0]` = 目的 SID、`segment[1]` = waypoint SID，
+  `hdrExtLen=4`、`lastEntry=1`、`segmentsLeft=1`，外层 DA = waypoint SID；
+- waypoint E：`transit_sid` 命中本机 SID → `srv6_end`（`segmentsLeft--`、DA 改写），
+  再按 `sid_fib`（站点 /48 → 核心口）转发回 C；C 不参与 SRv6 处理；
+- 目的 E：`segmentsLeft=0` 命中 `local_sid` 正常解封装；
+- 抓包断言（`srv6-te-waypoint`）：waypoint 的 C 上能看到
+  `seg1=1, DA=jnn SID` 进、`segleft=0, DA=sh SID` 出。
+
+限制：只支持 L3VPN 和单个 waypoint；3 段以上/压缩 SID 的报文会被丢弃。
 
 ## 业务流量用例
 

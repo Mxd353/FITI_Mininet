@@ -363,6 +363,26 @@ BUM 帧走同一格式，只是外层 dst 由 `l2_rep_sid` 按 egress_rid 逐站
 外层 DSCP：L3/L2 都把内层 `trafficClass` 复制到外层，underlay 可以按业务
 DSCP 做分类。
 
+#### SRv6 TE（静态多段）
+
+`configs/*.json` 的 `te_paths` 可以给某个 (网络, 源站点, 目的站点) 指定
+一个 waypoint 站点，入口 E 下发两段 SRH：
+
+```text
+segment[0] = 目的站点 E 的 SID      （最后一跳）
+segment[1] = waypoint 站点 E 的 SID （第一个要处理的）
+外层 IPv6: DA = segment[segmentsLeft] = waypoint SID
+SRH: hdrExtLen = 4, lastEntry = 1, segmentsLeft = 1
+```
+
+waypoint 站点的 E 上装 `transit_sid`（本机 SID → `srv6_end`）和 `sid_fib`
+（站点 /48 → 核心口）。报文到达时 `segmentsLeft` 从 1 减到 0、DA 改成
+`segment[0]`，再从原核心口转发出去；目的站点 E 照常 `local_sid` 解封装。
+C 路由器不参与 SRv6 处理，只按外层 DA 转发。
+
+限制：只支持 L3VPN、只支持一个 waypoint（SRH 最多 2 段）；3 段及以上或压缩
+SID 的报文会被 `parse_srh_bad` 标记后丢弃。
+
 #### VXLAN 过渡模式
 
 仅在 `l2_tunnel = "vxlan"` 时使用：

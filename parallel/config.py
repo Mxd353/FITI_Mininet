@@ -33,6 +33,15 @@ class Network:
     sites: Tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class TePath:
+    """一条静态 SRv6 TE 路径：入口站点经 waypoint 到目的站点。"""
+    network: int
+    src: str
+    dst: str
+    via: str
+
+
 @dataclass
 class ParallelConfig:
     path: str
@@ -50,6 +59,7 @@ class ParallelConfig:
     #: 端点 MTU。SRv6 封装要占 64B（L3）/78B（L2），端点上必须留出余量，
     #: 否则大包封装后超过 1500，BMv2 侧直接丢弃且不回 ICMPv6 PTB。
     endpoint_mtu: int = 1400
+    te_paths: List['TePath'] = field(default_factory=list)
 
     def site(self, abbr: str) -> Site:
         for item in self.sites:
@@ -114,6 +124,25 @@ class ParallelConfig:
     def underlay_address(site: Site, host: int) -> str:
         """Host-overlay underlay address (PM to PM inside one site)."""
         return 'fd00:0:%d:9::%d' % (int(site.id), int(host))
+
+    def te_via(self, network: Network, src_site: Site,
+               dst_site: Site) -> Optional[Site]:
+        for path in self.te_paths:
+            if (path.network == int(network.id)
+                    and path.src == src_site.abbr
+                    and path.dst == dst_site.abbr):
+                return self.site(path.via)
+        return None
+
+    def te_waypoints(self, network: Network) -> List[Site]:
+        sites = []
+        for path in self.te_paths:
+            if path.network != int(network.id):
+                continue
+            site = self.site(path.via)
+            if all(item.abbr != site.abbr for item in sites):
+                sites.append(site)
+        return sites
 
     def underlay_peer(self, host: int) -> Optional[int]:
         """Peer PM index for the VXLAN tunnel, or None when there is one PM."""
@@ -336,6 +365,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     endpoint_mtu = int(raw.get('endpoint_mtu', 1400))
     if not 576 <= endpoint_mtu <= 1500:
         raise ValueError('endpoint_mtu 必须在 576-1500: %s' % endpoint_mtu)
+    te_paths = _load_te_paths(raw.get('te_paths'), sites, networks)
     fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
     if not os.path.isabs(fiti_topology):
         fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)
@@ -364,11 +394,44 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         hosts_per_site=hosts_per_site,
         endpoints_per_host=endpoints_per_host,
         endpoint_mtu=endpoint_mtu,
+        te_paths=te_paths,
     )
 
 
 #: Linux 接口名上限（IFNAMSIZ - 1）。
 IFNAME_MAX = 15
+
+
+def _load_te_paths(raw, sites, networks):
+    """解析静态 TE 路径；只支持 L3VPN + 单个 waypoint。"""
+    abbrs = {site.abbr for site in sites}
+    by_id = {network.id: network for network in networks}
+    paths = []
+    for index, item in enumerate(raw or [], 1):
+        if not isinstance(item, dict):
+            raise ValueError('te_paths[%d] 必须是对象' % index)
+        try:
+            network_id = int(item['network'])
+            src = str(item['src'])
+            dst = str(item['dst'])
+            via = str(item['via'])
+        except KeyError as exc:
+            raise ValueError('te_paths[%d] 缺少字段 %s' % (index, exc))
+        network = by_id.get(network_id)
+        if network is None:
+            raise ValueError('te_paths[%d] 未知网络 %d' % (index, network_id))
+        if network.vpn != 'l3':
+            raise ValueError('te_paths[%d] 只支持 L3VPN 网络' % index)
+        for name in (src, dst, via):
+            if name not in abbrs:
+                raise ValueError('te_paths[%d] 未知站点 %s' % (index, name))
+            if name not in network.sites:
+                raise ValueError('te_paths[%d] 站点 %s 不在网络 %d 中'
+                                 % (index, name, network_id))
+        if via in (src, dst):
+            raise ValueError('te_paths[%d] waypoint 不能是源或目的站点' % index)
+        paths.append(TePath(network=network_id, src=src, dst=dst, via=via))
+    return paths
 
 
 def _check_ifname_length(sites, networks, hosts_per_site,
