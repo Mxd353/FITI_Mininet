@@ -195,6 +195,36 @@ underlay：fd00:0:{站点}:9::1（PM-A）/ ::2（PM-B）
 - 桥、tap、VXLAN 口都关闭 IPv6，避免 RS/MLD 噪声被当成 BUM 复制进隧道；
 - underlay veth 关闭 tx 校验和卸载，抓包看到的 UDP 校验和是真实值。
 
+## 接入 VXLAN 与 Linux VTEP（access_mode=vxlan）
+
+`access_mode` 为 `vxlan` 时，L3VPN 的接入段不再用业务 VLAN，而是：
+
+```text
+PM --VXLAN(VNI = 网络 ID)--> V_<站点>(Linux VTEP) --VLAN 3501..--> S1 --> E(BMv2) --SRv6-->
+```
+
+- PM 侧：每个 L3 网络一个 VXLAN 设备（`vx_*`），VNI = 网络 ID，
+  underlay 走 `u4000`（VLAN 4000），FDB 指向本站点 VTEP 和另一台 PM；
+- `V_<站点>`：Linux netns，两条上联到 S1——`eth0` 跑 underlay（`u4000`），
+  `eth1` 原设备直接进桥（由桥按 VID 打 tag）；VXLAN 解封装后以业务 VLAN
+  交给 E，反向则由 E 的 VLAN 帧进桥、再封 VXLAN 回 PM；
+- E 仍然只看到 VLAN，SRv6（含 L2 over SRv6、TE waypoint）完全保留；
+- L2VPN 暂时仍走 VLAN + 站点内 VXLAN，不经过 VTEP。
+
+为什么要有这个 VTEP：BMv2 是软件数据面，**不会计算 IPv6 UDP 校验和**
+（IPv6 下校验和为 0 会被内核丢包），把 VXLAN 终结放到内核里就绕过了这个限制。
+如果 E 换成真机或 Linux，这一层可以直接去掉。
+
+配置字段：
+
+```json
+"access_mode": "vxlan",
+"access_vtep": true
+```
+
+`access_vtep=false` 时 E 自己终结 VXLAN（P4 的 `vni_map` 路径），
+受限于上面的校验和问题，目前只用于研究。
+
 ## 接入交换机（OVS）
 
 - `S1` 上行放行并行 VLAN 3501-3900；

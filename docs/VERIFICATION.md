@@ -123,9 +123,9 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 
 | 配置 | 规模 | 结果 | 说明 |
 | --- | --- | --- | --- |
-| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns | 41/41 通过 | 用例耗时约 75 秒 |
+| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns + 4 VTEP | 41/41 通过 | 用例耗时约 84 秒 |
 | `parallel-min.json --tag faults` | 同上 | 1/1 通过 | netem 注入 100% 丢包后恢复 |
-| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns | 41/41 通过 | 用例耗时约 80 秒，峰值内存约 4.5 GB |
+| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns + 41 VTEP | 41/41 通过 | 用例耗时约 88 秒，峰值内存约 4.5 GB |
 
 失败用例会自动 dump 相关节点的 `ip -6 route/rule/addr` 和 P4 表项，
 放在 `runs/<时间戳>/evidence/`。
@@ -176,6 +176,19 @@ veth 上转一圈：
 sudo ip netns exec <cl_bj_1 的 ns> bridge fdb show | grep 02:01:00:01:02:01
 sudo ip netns exec <cl_bj_1 的 ns> tcpdump -i any -nn 'udp port 4789'
 ```
+
+## 接入 VXLAN（Linux VTEP）
+
+`configs/parallel.json` 与 `parallel-min.json` 默认 `access_mode=vxlan`、
+`access_vtep=true`：
+
+- PM 用 VXLAN（VNI = 网络 ID）把业务帧送到本站点的 Linux VTEP；
+- VTEP 解封装后以 VLAN 3501-3900 交给 E，E 再做 SRv6；
+- 好处是把 VXLAN 终结放在内核里（校验和由内核算），E 仍然是纯 P4/SRv6；
+- L2VPN 暂时仍走 VLAN（不经 VTEP），L2 跨站点仍是 SRv6。
+
+注意：PM 的业务 VLAN 子接口进桥时必须按 `pvid untagged` 配（tag 已被子接口剥掉），
+配成 tagged 会让帧落到 VLAN 1 被丢弃——这是排查过的真实坑。
 
 ## SRv6 TE（静态多段）
 
