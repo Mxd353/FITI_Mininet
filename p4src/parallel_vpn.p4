@@ -80,6 +80,7 @@ header vxlan_t {
     bit<8>  flags;
     bit<24> reserved;
     bit<24> vni;
+    bit<32> pseudo_len;
     bit<8>  reserved2;
 }
 
@@ -108,6 +109,7 @@ struct metadata_t {
     bit<1>  transit;
     bit<1>  bad_srh;
     bit<24> vni;
+    bit<32> pseudo_len;
 }
 
 parser ParserImpl(packet_in packet,
@@ -531,7 +533,8 @@ control IngressImpl(inout headers_t hdr,
         hdr.udp.setValid();
         hdr.udp.srcPort = UDP_VXLAN;
         hdr.udp.dstPort = UDP_VXLAN;
-        hdr.udp.length = hdr.inner_ipv6.payloadLen + 36;
+        // UDP 长度 = 8(UDP) + 8(VXLAN) + 14(内层 Eth) + 内层 IPv6
+        hdr.udp.length = hdr.inner_ipv6.payloadLen + 70;
         hdr.udp.checksum = 0;
         hdr.vxlan.setValid();
         hdr.vxlan.flags = VXLAN_FLAGS;
@@ -542,10 +545,15 @@ control IngressImpl(inout headers_t hdr,
         hdr.srh.setInvalid();
         hdr.segment0.setInvalid();
         hdr.segment1.setInvalid();
-        hdr.vlan.setInvalid();
+        // 接入 underlay 走 VLAN 4000，PM 侧在 u4000 上终结
+        hdr.vlan.setValid();
+        hdr.vlan.pcp = 0;
+        hdr.vlan.dei = 0;
+        hdr.vlan.vid = 4000;
+        hdr.vlan.etherType = ETHERTYPE_IPV6;
         hdr.ethernet.srcAddr = outer_smac;
         hdr.ethernet.dstAddr = outer_dmac;
-        hdr.ethernet.etherType = ETHERTYPE_IPV6;
+        hdr.ethernet.etherType = ETHERTYPE_VLAN;
         standard_metadata.egress_spec = port;
     }
 
@@ -942,6 +950,7 @@ control IngressImpl(inout headers_t hdr,
         meta.transit = 0;
         meta.bad_srh = 0;
         meta.vni = 0;
+        meta.pseudo_len = 0;
         meta.ingress_port = standard_metadata.ingress_port;
 
         port_cfg.apply();
@@ -1134,6 +1143,10 @@ control EgressImpl(inout headers_t hdr,
     }
 
     apply {
+        // update_checksum 不支持表达式，先把 32 位长度存进 metadata。
+        if (hdr.udp.isValid()) {
+            meta.pseudo_len = (bit<32>)hdr.ipv6.payloadLen;
+        }
         if (meta.l2_bum == 1) {
             l2_rep_sid.apply();
         }
@@ -1150,6 +1163,14 @@ control EgressImpl(inout headers_t hdr,
 control ComputeChecksumImpl(inout headers_t hdr,
                             inout metadata_t meta) {
     apply {
+        // IPv6 下 UDP 校验和是强制的（0 表示未计算，内核直接丢包）。
+        update_checksum_with_payload(
+            hdr.ipv6.isValid() && hdr.udp.isValid(),
+            { hdr.ipv6.srcAddr, hdr.ipv6.dstAddr,
+              meta.pseudo_len, 24w0, hdr.ipv6.nextHdr,
+              hdr.udp },
+            hdr.udp.checksum,
+            HashAlgorithm.csum16);
     }
 }
 
