@@ -60,6 +60,8 @@ class ParallelConfig:
     #: 否则大包封装后超过 1500，BMv2 侧直接丢弃且不回 ICMPv6 PTB。
     endpoint_mtu: int = 1400
     te_paths: List['TePath'] = field(default_factory=list)
+    #: 接入段封装：vlan = PM↔E 走 802.1Q；vxlan = L3VPN 接入走 VXLAN（VNI=网络 ID）。
+    access_mode: str = 'vlan'
 
     def site(self, abbr: str) -> Site:
         for item in self.sites:
@@ -119,6 +121,18 @@ class ParallelConfig:
     def vxlan_ifname(self, site: Site, host: int,
                      network: Network) -> str:
         return 'vx_%s_%d_%d' % (site.abbr, int(host), network.id)
+
+    @staticmethod
+    def access_address(site: Site, host: int) -> str:
+        """接入 underlay 地址：PM 侧（E 固定用 ::1）。"""
+        return 'fd00:0:%d:8::%d' % (int(site.id), 10 + int(host))
+
+    @staticmethod
+    def access_vtep(site: Site) -> str:
+        return 'fd00:0:%d:8::1' % int(site.id)
+
+    def access_vxlan(self, network: Network) -> bool:
+        return self.access_mode == 'vxlan' and network.vpn == 'l3'
 
     @staticmethod
     def underlay_address(site: Site, host: int) -> str:
@@ -366,6 +380,9 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     if not 576 <= endpoint_mtu <= 1500:
         raise ValueError('endpoint_mtu 必须在 576-1500: %s' % endpoint_mtu)
     te_paths = _load_te_paths(raw.get('te_paths'), sites, networks)
+    access_mode = str(raw.get('access_mode', 'vlan')).lower()
+    if access_mode not in ('vlan', 'vxlan'):
+        raise ValueError('access_mode 必须是 vlan/vxlan: %s' % access_mode)
     fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
     if not os.path.isabs(fiti_topology):
         fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)
@@ -395,6 +412,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         endpoints_per_host=endpoints_per_host,
         endpoint_mtu=endpoint_mtu,
         te_paths=te_paths,
+        access_mode=access_mode,
     )
 
 
@@ -471,8 +489,9 @@ def dump_config(cfg: ParallelConfig) -> None:
     print('FITI 核心: %s（%d 条链路）'
           % (cfg.fiti_topology, len(cfg.fiti.links)))
     print('L2 隧道: %s' % cfg.l2_tunnel)
-    print('每站点主机: %d，每主机端点: %d，端点 MTU: %d'
-          % (cfg.hosts_per_site, cfg.endpoints_per_host, cfg.endpoint_mtu))
+    print('每站点主机: %d，每主机端点: %d，端点 MTU: %d，接入: %s'
+          % (cfg.hosts_per_site, cfg.endpoints_per_host, cfg.endpoint_mtu,
+             cfg.access_mode))
     print('并行网络:')
     for network in cfg.networks:
         print('  ID=%d VLAN=%d VPN=%s'

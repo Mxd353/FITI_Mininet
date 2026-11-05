@@ -107,6 +107,7 @@ struct metadata_t {
     bit<1>  l2_bum;
     bit<1>  transit;
     bit<1>  bad_srh;
+    bit<24> vni;
 }
 
 parser ParserImpl(packet_in packet,
@@ -246,6 +247,16 @@ control IngressImpl(inout headers_t hdr,
         }
     }
 
+    // 接入口同时接受 tagged（L2VPN VLAN）和 untagged（L3VPN VXLAN）。
+    action set_hybrid() {
+        if (hdr.vlan.isValid()) {
+            meta.vlan_id = hdr.vlan.vid;
+        } else {
+            meta.vlan_id = VLAN_NONE;
+        }
+        meta.port_ok = 1;
+    }
+
     action set_core() {
         if (hdr.vlan.isValid()) {
             drop();
@@ -264,6 +275,7 @@ control IngressImpl(inout headers_t hdr,
             set_access;
             set_trunk;
             set_core;
+            set_hybrid;
             drop;
         }
         size = 256;
@@ -278,6 +290,46 @@ control IngressImpl(inout headers_t hdr,
     action map_l2() {
         meta.vrf_id = 0;
         meta.l2_mode = 1;
+    }
+
+    // 接入 VXLAN 解封装：把内层帧搬回主头，VNI 已由调用方存进 meta.vni。
+    action vxlan_access_decap() {
+        hdr.ethernet.dstAddr = hdr.inner_ethernet.dstAddr;
+        hdr.ethernet.srcAddr = hdr.inner_ethernet.srcAddr;
+        hdr.ethernet.etherType = hdr.inner_ethernet.etherType;
+        hdr.vlan.setInvalid();
+        if (hdr.inner_ipv6.isValid()) {
+            hdr.ipv6.version = hdr.inner_ipv6.version;
+            hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
+            hdr.ipv6.flowLabel = hdr.inner_ipv6.flowLabel;
+            hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen;
+            hdr.ipv6.nextHdr = hdr.inner_ipv6.nextHdr;
+            hdr.ipv6.hopLimit = hdr.inner_ipv6.hopLimit;
+            hdr.ipv6.srcAddr = hdr.inner_ipv6.srcAddr;
+            hdr.ipv6.dstAddr = hdr.inner_ipv6.dstAddr;
+        } else {
+            hdr.ipv6.setInvalid();
+        }
+        hdr.srh.setInvalid();
+        hdr.segment0.setInvalid();
+        hdr.segment1.setInvalid();
+        hdr.udp.setInvalid();
+        hdr.vxlan.setInvalid();
+        hdr.inner_ethernet.setInvalid();
+        hdr.inner_vlan.setInvalid();
+        hdr.inner_ipv6.setInvalid();
+    }
+
+    table vni_map {
+        key = {
+            meta.vni: exact;
+        }
+        actions = {
+            map_l3;
+            drop;
+        }
+        size = 4096;
+        default_action = drop;
     }
 
     table vlan_map {
@@ -443,6 +495,60 @@ control IngressImpl(inout headers_t hdr,
         default_action = drop;
     }
 
+    // L3 交付到 PM：自包含的 VXLAN 封装（VNI = 网络 ID），
+    // 内层目的 MAC 改成 VM，外层是 E→PM 的 underlay 头。
+    action forward_l3_vxlan(bit<128> src_vtep, bit<128> dst_vtep,
+                            bit<48> outer_smac, bit<48> outer_dmac,
+                            bit<48> vm_mac, bit<48> inner_smac,
+                            bit<9> port, bit<24> vni) {
+        hdr.inner_ethernet.setValid();
+        hdr.inner_ethernet.dstAddr = vm_mac;
+        hdr.inner_ethernet.srcAddr = inner_smac;
+        hdr.inner_ethernet.etherType = hdr.vlan.isValid() ?
+                                       hdr.vlan.etherType :
+                                       hdr.ethernet.etherType;
+        hdr.inner_vlan.setInvalid();
+        hdr.inner_ipv6.setValid();
+        hdr.inner_ipv6.version = hdr.ipv6.version;
+        hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
+        hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
+        hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
+        hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
+        hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
+        hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
+        hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+
+        hdr.ipv6.version = 6;
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
+        hdr.ipv6.flowLabel = 0;
+        // 外层 = 8B UDP + 8B VXLAN + 14B 内层 Eth + 内层 IPv6
+        hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + 70;
+        hdr.ipv6.nextHdr = IPPROTO_UDP;
+        hdr.ipv6.hopLimit = 64;
+        hdr.ipv6.srcAddr = src_vtep;
+        hdr.ipv6.dstAddr = dst_vtep;
+
+        hdr.udp.setValid();
+        hdr.udp.srcPort = UDP_VXLAN;
+        hdr.udp.dstPort = UDP_VXLAN;
+        hdr.udp.length = hdr.inner_ipv6.payloadLen + 36;
+        hdr.udp.checksum = 0;
+        hdr.vxlan.setValid();
+        hdr.vxlan.flags = VXLAN_FLAGS;
+        hdr.vxlan.reserved = 0;
+        hdr.vxlan.vni = vni;
+        hdr.vxlan.reserved2 = 0;
+
+        hdr.srh.setInvalid();
+        hdr.segment0.setInvalid();
+        hdr.segment1.setInvalid();
+        hdr.vlan.setInvalid();
+        hdr.ethernet.srcAddr = outer_smac;
+        hdr.ethernet.dstAddr = outer_dmac;
+        hdr.ethernet.etherType = ETHERTYPE_IPV6;
+        standard_metadata.egress_spec = port;
+    }
+
     action forward_l3(bit<9> port, bit<48> smac, bit<48> dmac,
                       bit<12> out_vlan) {
         standard_metadata.egress_spec = port;
@@ -471,6 +577,7 @@ control IngressImpl(inout headers_t hdr,
         }
         actions = {
             forward_l3;
+            forward_l3_vxlan;
             srv6_encap;
             srv6_encap_te;
             drop;
@@ -507,6 +614,29 @@ control IngressImpl(inout headers_t hdr,
         hdr.segment1.setInvalid();
         hdr.inner_ipv6.setInvalid();
         standard_metadata.egress_spec = port;
+    }
+
+    // SRv6 解封装后直接交给 VXLAN 接入：只恢复内层，不碰 VLAN。
+    action srv6_decap_vxlan(bit<16> vrf_id) {
+        meta.vrf_id = vrf_id;
+        hdr.ethernet.etherType = ETHERTYPE_IPV6;
+        hdr.vlan.setInvalid();
+        if (hdr.inner_ipv6.isValid()) {
+            hdr.ipv6.version = hdr.inner_ipv6.version;
+            hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
+            hdr.ipv6.flowLabel = hdr.inner_ipv6.flowLabel;
+            hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen;
+            hdr.ipv6.nextHdr = hdr.inner_ipv6.nextHdr;
+            hdr.ipv6.hopLimit = hdr.inner_ipv6.hopLimit;
+            hdr.ipv6.srcAddr = hdr.inner_ipv6.srcAddr;
+            hdr.ipv6.dstAddr = hdr.inner_ipv6.dstAddr;
+        } else {
+            hdr.ipv6.setInvalid();
+        }
+        hdr.srh.setInvalid();
+        hdr.segment0.setInvalid();
+        hdr.segment1.setInvalid();
+        hdr.inner_ipv6.setInvalid();
     }
 
     action srv6_l2_encap(bit<128> src_sid, bit<128> dst_sid,
@@ -616,6 +746,7 @@ control IngressImpl(inout headers_t hdr,
         }
         actions = {
             srv6_decap;
+            srv6_decap_vxlan;
             srv6_l2_decap;
             drop;
         }
@@ -810,6 +941,7 @@ control IngressImpl(inout headers_t hdr,
         meta.l2_bum = 0;
         meta.transit = 0;
         meta.bad_srh = 0;
+        meta.vni = 0;
         meta.ingress_port = standard_metadata.ingress_port;
 
         port_cfg.apply();
@@ -818,8 +950,15 @@ control IngressImpl(inout headers_t hdr,
         }
         if (meta.port_ok == 1 && meta.bad_srh == 0) {
             if (hdr.vxlan.isValid()) {
-                // Outer VXLAN packet from the remote E router.
-                vxlan_map.apply();
+                if (meta.core_port == 1) {
+                    // E↔E 的 VXLAN 回退模式：VNI → S1 端口。
+                    vxlan_map.apply();
+                } else {
+                    // 接入 VXLAN：解封装 + VNI → VRF/VS I。
+                    meta.vni = hdr.vxlan.vni;
+                    vxlan_access_decap();
+                    vni_map.apply();
+                }
             } else if (hdr.srh.isValid()) {
                 if (hdr.srh.segmentsLeft > 0) {
                     // SRv6 transit（waypoint）：改写 SL/DA 后再查 SID 路由。
@@ -828,13 +967,8 @@ control IngressImpl(inout headers_t hdr,
                         sid_fib.apply();
                     }
                 } else {
-                    // SRv6 packet destined to a local SID.  For L3VPN the
-                    // decap action records the VRF and the inner destination
-                    // is looked up again so it is delivered to the owning host.
+                    // 目的 SID：解封装后由下面的公共逻辑按 VRF 投递。
                     local_sid.apply();
-                    if (meta.vrf_id != 0 && hdr.ipv6.isValid()) {
-                        l3_fib.apply();
-                    }
                 }
             } else {
                 if (meta.core_port == 1) {
@@ -844,7 +978,9 @@ control IngressImpl(inout headers_t hdr,
                 } else if (meta.vlan_id != VLAN_NONE) {
                     vlan_map.apply();
                 }
+            }
 
+            if (meta.transit == 0) {
                 if (meta.vrf_id != 0 && hdr.ipv6.isValid()) {
                     if (hdr.ipv6.hopLimit <= 1) {
                         drop();
@@ -961,6 +1097,16 @@ control EgressImpl(inout headers_t hdr,
     action set_trunk() {
     }
 
+    // 接入口同时接受 tagged（L2VPN VLAN）和 untagged（L3VPN VXLAN）。
+    action set_hybrid() {
+        if (hdr.vlan.isValid()) {
+            meta.vlan_id = hdr.vlan.vid;
+        } else {
+            meta.vlan_id = VLAN_NONE;
+        }
+        meta.port_ok = 1;
+    }
+
     action set_core() {
         if (hdr.vlan.isValid()) {
             hdr.ethernet.etherType = hdr.vlan.etherType;
@@ -980,6 +1126,7 @@ control EgressImpl(inout headers_t hdr,
             set_access;
             set_trunk;
             set_core;
+            set_hybrid;
             drop;
         }
         size = 256;
