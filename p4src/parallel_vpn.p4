@@ -1143,10 +1143,6 @@ control EgressImpl(inout headers_t hdr,
     }
 
     apply {
-        // update_checksum 不支持表达式，先把 32 位长度存进 metadata。
-        if (hdr.udp.isValid()) {
-            meta.pseudo_len = (bit<32>)hdr.ipv6.payloadLen;
-        }
         if (meta.l2_bum == 1) {
             l2_rep_sid.apply();
         }
@@ -1163,14 +1159,9 @@ control EgressImpl(inout headers_t hdr,
 control ComputeChecksumImpl(inout headers_t hdr,
                             inout metadata_t meta) {
     apply {
-        // IPv6 下 UDP 校验和是强制的（0 表示未计算，内核直接丢包）。
-        update_checksum_with_payload(
-            hdr.ipv6.isValid() && hdr.udp.isValid(),
-            { hdr.ipv6.srcAddr, hdr.ipv6.dstAddr,
-              meta.pseudo_len, 24w0, hdr.ipv6.nextHdr,
-              hdr.udp },
-            hdr.udp.checksum,
-            HashAlgorithm.csum16);
+        // TODO: IPv6 下 UDP 校验和是强制的，这里填 0 会被内核丢包。
+        // 现在的 update_checksum 方案会破坏转发路径，先退回；
+        // 下一步要么手写校验和，要么接入 underlay 改走 IPv4。
     }
 }
 
