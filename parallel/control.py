@@ -17,7 +17,7 @@ from parallel.config import ParallelConfig
 from parallel.evpn import build_evpn_routes, validate_evpn_routes
 from parallel.p4 import runtime_names
 from parallel.topology import (a_name, c_name, cloud_name, e_name,
-                               s1_name, s2_name)
+                               s1_name, s2_name, vtep_name)
 
 #: How many site PEs to program at once.  Each worker owns one
 #: simple_switch_CLI process, so updates to one switch stay ordered while
@@ -141,7 +141,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             if network.vpn == 'l3':
                 _add(commands[e], names, 'vlan_map', 'map_l3',
                      [network.vlan], [network.id])
-                if cfg.access_vxlan(network):
+                if cfg.e_vxlan(network):
                     _add(commands[e], names, 'vni_map', 'map_l3',
                          [network.id], [network.id])
             else:
@@ -163,7 +163,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             network = cfg.network(route.vni)
             target = cfg.site(route.origin)
             if target.abbr == site.abbr:
-                if cfg.access_vxlan(network):
+                if cfg.e_vxlan(network):
                     # 接入 VXLAN：本地 /64 交给逐主机 /128 投递
                     continue
                 _add(commands[e], names, 'l3_fib', 'forward_l3',
@@ -199,12 +199,12 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                     address = '%s/128' % cfg.cloud_address(
                         network, site, host_id, endpoint)
                     mac = cfg.cloud_mac(network, site, host_id, endpoint)
-                    if cfg.access_vxlan(network):
+                    if cfg.e_vxlan(network):
                         cloud = net.get(cloud_name(site, host_id))
                         _add(commands[e], names, 'l3_fib',
                              'forward_l3_vxlan',
                              [network.id, address],
-                             [cfg.access_vtep(site),
+                             [cfg.e_vtep_address(site),
                               cfg.access_address(site, host_id),
                               macs[site.abbr]['e_s1'],
                               _host_mac(cloud, s1_name(site)),
@@ -222,7 +222,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                 raise RuntimeError('站点 %s 缺少网络 %d 的本地 EVPN 路由'
                                    % (site.abbr, network.id))
             local_sid = local_route.sid
-            if cfg.access_vxlan(network):
+            if cfg.e_vxlan(network):
                 _add(commands[e], names, 'local_sid', 'srv6_decap_vxlan',
                      ['%s/128' % local_sid], [network.id])
             else:
@@ -412,14 +412,14 @@ def _configure_cloud_host(net, cfg, site, host_id):
         _set_addr(cloud, access_uplink,
                   cfg.access_address(site, host_id) + '/64')
         _run_ip(cloud, 'ip -6 neigh replace %s lladdr %s dev %s nud permanent'
-                % (cfg.access_vtep(site), e_mac, access_uplink),
+                % (cfg.e_vtep_address(site), e_mac, access_uplink),
                 '接入网关邻居')
         cloud.cmd('ethtool -K %s tx off 2>/dev/null || true' % access_uplink)
 
     if l2_networks:
         new_bridge(vlan_bridge, True)
     for network in cfg.networks_for_site(site):
-        if cfg.access_vxlan(network):
+        if cfg.pm_vxlan(network):
             bridge = cfg.bridge_name(site, host_id) + '_%d' % network.id
             new_bridge(bridge, False)
             for endpoint in cfg.endpoint_ids():
@@ -453,8 +453,10 @@ def _configure_cloud_host(net, cfg, site, host_id):
             cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % vx)
             _run_ip(cloud, 'ip link set dev %s up' % vx, '启用 VXLAN')
             # 远端：站点 E 和同站点另一台 PM
+            remote = (cfg.vtep_address(site) if cfg.access_vtep
+                      else cfg.e_vtep_address(site))
             _run_ip(cloud, 'bridge fdb replace %s dev %s dst %s'
-                    % (e_mac, vx, cfg.access_vtep(site)), '到 E 的 FDB')
+                    % (e_mac, vx, remote), '到接入终结点的 FDB')
             if peer_id is not None:
                 for endpoint in cfg.endpoint_ids():
                     peer_mac = cfg.cloud_mac(network, site, peer_id, endpoint)
@@ -540,6 +542,67 @@ def _configure_cloud_host(net, cfg, site, host_id):
                   cfg.underlay_address(site, host_id) + '/64')
         cloud.cmd('ethtool -K %s tx off 2>/dev/null || true'
                   % underlay.name)
+
+
+def _configure_vtep(net, cfg, site):
+    """Linux VTEP：终结 PM 的接入 VXLAN，再用 VLAN 交给 E。
+
+    PM --VXLAN(VNI=net)--> V_x --VLAN--> S1 --> E
+    """
+    vtep = net.get(vtep_name(site))
+    parent = _host_intf(vtep, s1_name(site))
+    underlay = 'u4000'
+    _run_ip(vtep, 'ip link add link %s name %s type vlan id 4000'
+            % (parent.name, underlay), '创建 VTEP underlay')
+    _run_ip(vtep, 'ip link set dev %s up' % underlay, '启用 VTEP underlay')
+    _set_addr(vtep, underlay, cfg.vtep_address(site) + '/64')
+
+    bridge = 'br_vtep_%s' % site.abbr
+    vtep.cmd('ip link del %s 2>/dev/null || true' % bridge)
+    _run_ip(vtep, 'ip link add name %s type bridge vlan_filtering 1' % bridge,
+            '创建 VTEP 桥')
+    _run_ip(vtep, 'ip link set dev %s mtu %d' % (bridge, cfg.endpoint_mtu),
+            '设置 VTEP 桥 MTU')
+    _run_ip(vtep, 'ip link set dev %s up' % bridge, '启用 VTEP 桥')
+    vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % bridge)
+
+    for network in cfg.l3_networks_for_site(site):
+        vx = 'vx_vtep_%s_%d' % (site.abbr, network.id)
+        vtep.cmd('ip link del %s 2>/dev/null || true' % vx)
+        _run_ip(vtep, 'ip link add %s type vxlan id %d local %s dev %s '
+                'dstport 4789 nolearning'
+                % (vx, network.id, cfg.vtep_address(site), underlay),
+                '创建 VTEP VXLAN')
+        _run_ip(vtep, 'ip link set dev %s mtu %d' % (vx, cfg.endpoint_mtu),
+                '设置 VTEP VXLAN MTU')
+        _run_ip(vtep, 'ip link set dev %s master %s' % (vx, bridge),
+                'VXLAN 接入 VTEP 桥')
+        _run_ip(vtep, 'bridge vlan add dev %s vid %d pvid untagged'
+                % (vx, network.vlan), '配置 VTEP VXLAN VLAN')
+        vtep.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true' % vx)
+        _run_ip(vtep, 'bridge link set dev %s learning off' % vx,
+                '关闭 VTEP VXLAN 学习')
+        vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % vx)
+        _run_ip(vtep, 'ip link set dev %s up' % vx, '启用 VTEP VXLAN')
+        for host_id in cfg.host_ids():
+            for endpoint in cfg.endpoint_ids():
+                _run_ip(vtep, 'bridge fdb replace %s dev %s dst %s'
+                        % (cfg.cloud_mac(network, site, host_id, endpoint),
+                           vx, cfg.access_address(site, host_id)),
+                        'VTEP 到 PM 的 FDB')
+        vlan_dev = 'v%d' % network.vlan
+        vtep.cmd('ip link del %s 2>/dev/null || true' % vlan_dev)
+        _run_ip(vtep, 'ip link add link %s name %s type vlan id %d'
+                % (parent.name, vlan_dev, network.vlan), '创建 E 侧 VLAN')
+        _run_ip(vtep, 'ip link set dev %s master %s' % (vlan_dev, bridge),
+                'E 侧 VLAN 接入 VTEP 桥')
+        _run_ip(vtep, 'bridge vlan add dev %s vid %d'
+                % (vlan_dev, network.vlan), '配置 E 侧 tagged VLAN')
+        vtep.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
+                 % vlan_dev)
+        _run_ip(vtep, 'ip link set dev %s up' % vlan_dev, '启用 E 侧 VLAN')
+    vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % parent.name)
+    vtep.cmd('ethtool -K %s tx off 2>/dev/null || true' % underlay)
 
 
 def _configure_cloud_interfaces(net, cfg):
@@ -796,6 +859,10 @@ def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
     names = runtime_names(json_path or cfg.p4_json)
     print('*** 配置云主机、宿主机桥和 VXLAN')
     _configure_cloud_interfaces(net, cfg)
+    if cfg.access_vtep:
+        print('*** 配置 Linux VTEP（接入 VXLAN → VLAN）')
+        for site in cfg.sites:
+            _configure_vtep(net, cfg, site)
     switch_ports = _port_maps(net, cfg)
     macs = _site_macs(net, cfg)
 

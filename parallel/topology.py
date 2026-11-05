@@ -26,6 +26,11 @@ def s1_name(site) -> str:
     return 'S1_%s' % site.abbr
 
 
+def vtep_name(site) -> str:
+    """Linux VTEP：终结接入 VXLAN，再以 VLAN 交给 E。"""
+    return 'V_%s' % site.abbr
+
+
 def s2_name(site) -> str:
     return 'S2_%s' % site.abbr
 
@@ -153,6 +158,10 @@ class ParallelTopology(Topo):
                 self.addHost(host)
                 self.addLink(host, s1_name(site))
                 self.addLink(host, s2_name(site))
+            if cfg.access_vtep:
+                vtep = vtep_name(site)
+                self.addHost(vtep)
+                self.addLink(vtep, s1_name(site))
             hosts = [cloud_name(site, host_id) for host_id in cfg.host_ids()]
             for index in range(0, len(hosts) - 1, 2):
                 self.addLink(hosts[index], hosts[index + 1])

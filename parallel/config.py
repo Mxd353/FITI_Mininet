@@ -62,6 +62,8 @@ class ParallelConfig:
     te_paths: List['TePath'] = field(default_factory=list)
     #: 接入段封装：vlan = PM↔E 走 802.1Q；vxlan = L3VPN 接入走 VXLAN（VNI=网络 ID）。
     access_mode: str = 'vlan'
+    #: access_mode=vxlan 时，是否用一台 Linux VTEP 先终结 VXLAN 再交给 E。
+    access_vtep: bool = False
 
     def site(self, abbr: str) -> Site:
         for item in self.sites:
@@ -128,11 +130,20 @@ class ParallelConfig:
         return 'fd00:0:%d:8::%d' % (int(site.id), 10 + int(host))
 
     @staticmethod
-    def access_vtep(site: Site) -> str:
+    def e_vtep_address(site: Site) -> str:
+        """E 作为 VTEP 时的地址（access_vtep=False 时使用）。"""
         return 'fd00:0:%d:8::1' % int(site.id)
 
-    def access_vxlan(self, network: Network) -> bool:
+    def pm_vxlan(self, network: Network) -> bool:
+        """PM 侧是否用 VXLAN 接入。"""
         return self.access_mode == 'vxlan' and network.vpn == 'l3'
+
+    def e_vxlan(self, network: Network) -> bool:
+        """E（P4）是否直接终结 VXLAN；有 Linux VTEP 时为 False。"""
+        return self.pm_vxlan(network) and not self.access_vtep
+
+    def vtep_address(self, site: Site) -> str:
+        return 'fd00:0:%d:8::2' % int(site.id)
 
     @staticmethod
     def underlay_address(site: Site, host: int) -> str:
@@ -383,6 +394,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     access_mode = str(raw.get('access_mode', 'vlan')).lower()
     if access_mode not in ('vlan', 'vxlan'):
         raise ValueError('access_mode 必须是 vlan/vxlan: %s' % access_mode)
+    access_vtep = bool(raw.get('access_vtep', False))
     fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
     if not os.path.isabs(fiti_topology):
         fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)
@@ -413,6 +425,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         endpoint_mtu=endpoint_mtu,
         te_paths=te_paths,
         access_mode=access_mode,
+        access_vtep=access_vtep,
     )
 
 

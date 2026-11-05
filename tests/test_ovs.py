@@ -10,6 +10,7 @@ from parallel.ovs import (ALL_VLANS, NON_PARALLEL_VLANS,
                           PARALLEL_VLAN_MIN,
                           configure_ovs_switches, set_trunk, trunk_vlans)
 from parallel.topology import (ParallelTopology, a_name, cloud_name, e_name,
+                               vtep_name,
                                s1_name, s2_name)
 from mininet.node import OVSBridge
 
@@ -90,6 +91,8 @@ def _build_net(cfg):
             cloud = cloud_name(site, host_id)
             s1.connect(cloud)
             s2.connect(cloud)
+        if cfg.access_vtep:
+            s1.connect(vtep_name(site))
     return net
 
 
@@ -129,7 +132,9 @@ class OvsConfigTest(unittest.TestCase):
             s1 = self.net.get(s1_name(site))
             s2 = self.net.get(s2_name(site))
 
-            expected_s1 = [ALL_VLANS] * (1 + len(list(self.cfg.host_ids())))
+            expected_s1 = [ALL_VLANS] * (
+                1 + len(list(self.cfg.host_ids()))
+                + (1 if self.cfg.access_vtep else 0))
             self.assertEqual(sorted(s1.trunks.values()),
                              sorted(expected_s1))
 

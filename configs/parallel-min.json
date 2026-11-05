@@ -88,5 +88,6 @@
             "via": "jnn"
         }
     ],
-    "access_mode": "vxlan"
+    "access_mode": "vxlan",
+    "access_vtep": true
 }

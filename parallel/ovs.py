@@ -19,7 +19,8 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-from parallel.topology import a_name, cloud_name, e_name, s1_name, s2_name
+from parallel.topology import (a_name, cloud_name, e_name, s1_name,
+                               s2_name, vtep_name)
 
 #: How many sites to configure concurrently.  S1/S2 of different sites are
 #: independent OVS bridges, so per-site parallelism is safe.
@@ -125,6 +126,9 @@ def _configure_site(net, cfg, site):
         cloud = cloud_name(site, host_id)
         set_trunk(s1, intf_to(s1, cloud), ALL_VLANS)
         set_trunk(s2, intf_to(s2, cloud), ALL_VLANS)
+    if cfg.access_vtep:
+        # Linux VTEP 同时承载 underlay(4000) 和业务 VLAN
+        set_trunk(s1, intf_to(s1, vtep_name(site)), ALL_VLANS)
 
     # S2's uplink is the only restrictive policy in the design; make a
     # silent ovs-vsctl typo visible at startup instead of at ping time.
