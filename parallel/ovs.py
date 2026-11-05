@@ -127,8 +127,18 @@ def _configure_site(net, cfg, site):
         set_trunk(s1, intf_to(s1, cloud), ALL_VLANS)
         set_trunk(s2, intf_to(s2, cloud), ALL_VLANS)
     if cfg.access_vtep:
-        # Linux VTEP 同时承载 underlay(4000) 和业务 VLAN
-        set_trunk(s1, intf_to(s1, vtep_name(site)), ALL_VLANS)
+        # VTEP 有两条上联：underlay 与业务 trunk，都要放行
+        for port in sorted(s1.intfs):
+            intf = s1.intfs[port]
+            link = getattr(intf, 'link', None)
+            names = []
+            if link is not None:
+                for end in (link.intf1, link.intf2):
+                    node = getattr(end, 'node', None)
+                    if node is not None and node is not s1:
+                        names.append(node.name)
+            if vtep_name(site) in names:
+                set_trunk(s1, intf, ALL_VLANS)
 
     # S2's uplink is the only restrictive policy in the design; make a
     # silent ovs-vsctl typo visible at startup instead of at ping time.

@@ -161,6 +161,8 @@ class ParallelTopology(Topo):
             if cfg.access_vtep:
                 vtep = vtep_name(site)
                 self.addHost(vtep)
+                # eth0: underlay（VLAN 4000）；eth1: 业务 trunk 进桥
+                self.addLink(vtep, s1_name(site))
                 self.addLink(vtep, s1_name(site))
             hosts = [cloud_name(site, host_id) for host_id in cfg.host_ids()]
             for index in range(0, len(hosts) - 1, 2):

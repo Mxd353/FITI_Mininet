@@ -548,15 +548,25 @@ def _configure_vtep(net, cfg, site):
     """Linux VTEP：终结 PM 的接入 VXLAN，再用 VLAN 交给 E。
 
     PM --VXLAN(VNI=net)--> V_x --VLAN--> S1 --> E
+
+    VTEP 用两条上联，避免“同一条线上既要终结 underlay、又要做桥 trunk”：
+    eth0 跑 underlay（VLAN 4000，u4000 子接口），
+    eth1 直接进桥，由桥按 VID 打 tag（不能再用 VLAN 子接口，否则双 tag）。
     """
     vtep = net.get(vtep_name(site))
-    parent = _host_intf(vtep, s1_name(site))
     e_mac = _host_mac(net.get(e_name(site)), s1_name(site))
+    intfs = [vtep.intfs[port] for port in sorted(vtep.intfs)]
+    if len(intfs) < 2:
+        raise RuntimeError('%s 需要两条到 S1 的链路' % vtep.name)
+    underlay_intf, trunk_intf = intfs[0], intfs[1]
+
     underlay = 'u4000'
+    vtep.cmd('ip link del %s 2>/dev/null || true' % underlay)
     _run_ip(vtep, 'ip link add link %s name %s type vlan id 4000'
-            % (parent.name, underlay), '创建 VTEP underlay')
+            % (underlay_intf.name, underlay), '创建 VTEP underlay')
     _run_ip(vtep, 'ip link set dev %s up' % underlay, '启用 VTEP underlay')
     _set_addr(vtep, underlay, cfg.vtep_address(site) + '/64')
+    vtep.cmd('ethtool -K %s tx off 2>/dev/null || true' % underlay)
 
     bridge = 'br_vtep_%s' % site.abbr
     vtep.cmd('ip link del %s 2>/dev/null || true' % bridge)
@@ -566,6 +576,18 @@ def _configure_vtep(net, cfg, site):
             '设置 VTEP 桥 MTU')
     _run_ip(vtep, 'ip link set dev %s up' % bridge, '启用 VTEP 桥')
     vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % bridge)
+    vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1'
+             % underlay_intf.name)
+
+    # 业务 trunk：原设备进桥，由桥打 tag
+    _run_ip(vtep, 'ip link set dev %s master %s'
+            % (trunk_intf.name, bridge), 'VTEP trunk 进桥')
+    for network in cfg.l3_networks_for_site(site):
+        _run_ip(vtep, 'bridge vlan add dev %s vid %d'
+                % (trunk_intf.name, network.vlan), 'VTEP trunk tagged VLAN')
+    vtep.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
+             % trunk_intf.name)
+    _run_ip(vtep, 'ip link set dev %s up' % trunk_intf.name, '启用 VTEP trunk')
 
     for network in cfg.l3_networks_for_site(site):
         vx = 'vx_vtep_%s_%d' % (site.abbr, network.id)
@@ -591,21 +613,8 @@ def _configure_vtep(net, cfg, site):
                         % (cfg.cloud_mac(network, site, host_id, endpoint),
                            vx, cfg.access_address(site, host_id)),
                         'VTEP 到 PM 的 FDB')
-        vlan_dev = 'v%d' % network.vlan
-        vtep.cmd('ip link del %s 2>/dev/null || true' % vlan_dev)
-        _run_ip(vtep, 'ip link add link %s name %s type vlan id %d'
-                % (parent.name, vlan_dev, network.vlan), '创建 E 侧 VLAN')
-        _run_ip(vtep, 'ip link set dev %s master %s' % (vlan_dev, bridge),
-                'E 侧 VLAN 接入 VTEP 桥')
-        _run_ip(vtep, 'bridge vlan add dev %s vid %d'
-                % (vlan_dev, network.vlan), '配置 E 侧 tagged VLAN')
-        vtep.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
-                 % vlan_dev)
-        _run_ip(vtep, 'ip link set dev %s up' % vlan_dev, '启用 E 侧 VLAN')
         _run_ip(vtep, 'bridge fdb replace %s dev %s master static'
-                % (e_mac, vlan_dev), 'VTEP 到 E 的静态 FDB')
-    vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % parent.name)
-    vtep.cmd('ethtool -K %s tx off 2>/dev/null || true' % underlay)
+                % (e_mac, trunk_intf.name), 'VTEP 到 E 的静态 FDB')
 
 
 def _configure_cloud_interfaces(net, cfg):

@@ -43,7 +43,8 @@ class _Ovs(object):
         self.trunks = {}
 
     def connect(self, peer_name):
-        intf = _Intf(self, '%s-%s' % (self.name, peer_name))
+        intf = _Intf(self, '%s-%s-%d' % (self.name, peer_name,
+                                          len(self.intfs) + 1))
         self.intfs[len(self.intfs) + 1] = intf
         _Link(intf, _Intf(_Peer(peer_name), 'peer'))
         return intf
@@ -93,6 +94,7 @@ def _build_net(cfg):
             s2.connect(cloud)
         if cfg.access_vtep:
             s1.connect(vtep_name(site))
+            s1.connect(vtep_name(site))
     return net
 
 
@@ -134,7 +136,7 @@ class OvsConfigTest(unittest.TestCase):
 
             expected_s1 = [ALL_VLANS] * (
                 1 + len(list(self.cfg.host_ids()))
-                + (1 if self.cfg.access_vtep else 0))
+                + (2 if self.cfg.access_vtep else 0))
             self.assertEqual(sorted(s1.trunks.values()),
                              sorted(expected_s1))
 
