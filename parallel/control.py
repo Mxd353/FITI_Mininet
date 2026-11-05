@@ -551,6 +551,7 @@ def _configure_vtep(net, cfg, site):
     """
     vtep = net.get(vtep_name(site))
     parent = _host_intf(vtep, s1_name(site))
+    e_mac = _host_mac(net.get(e_name(site)), s1_name(site))
     underlay = 'u4000'
     _run_ip(vtep, 'ip link add link %s name %s type vlan id 4000'
             % (parent.name, underlay), '创建 VTEP underlay')
@@ -601,6 +602,8 @@ def _configure_vtep(net, cfg, site):
         vtep.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
                  % vlan_dev)
         _run_ip(vtep, 'ip link set dev %s up' % vlan_dev, '启用 E 侧 VLAN')
+        _run_ip(vtep, 'bridge fdb replace %s dev %s master static'
+                % (e_mac, vlan_dev), 'VTEP 到 E 的静态 FDB')
     vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % parent.name)
     vtep.cmd('ethtool -K %s tx off 2>/dev/null || true' % underlay)
 
