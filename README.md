@@ -1,5 +1,14 @@
 # FITI 并行网络仿真
 
+> **版本说明（feature/vxlan-access 分支）**
+>
+> 本分支是“接入 VXLAN”版本：PM 通过 VXLAN（VNI = 网络 ID）接入，由本站点的
+> Linux VTEP 终结后再以 VLAN 交给 E，E 仍然是 BMv2/P4（SRv6 BE/TE、L2 over SRv6
+> 不变）。主线 `feature/parallel-network` 保持“PM 直接用 VLAN 接入”，两者不合并。
+>
+> 运行方式与主线相同：`make parallel-run-min` / `make verify-min`；
+> 切换版本：`git checkout feature/parallel-network` 或 `feature/vxlan-access`。
+
 本分支只包含 **中关村主干网并行网络仿真**。
 
 当前范围：
