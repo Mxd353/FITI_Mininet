@@ -420,5 +420,7 @@
             "dst": "sh",
             "via": "jnn"
         }
-    ]
+    ],
+    "access_mode": "vxlan",
+    "access_vtep": true
 }
