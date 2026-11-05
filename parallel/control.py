@@ -525,8 +525,10 @@ def _configure_cloud_host(net, cfg, site, host_id):
                 % (parent.name, uplink, network.vlan), '创建 VLAN 子接口')
         _run_ip(cloud, 'ip link set dev %s master %s' % (uplink, vlan_bridge),
                 'VLAN 上联接桥')
-        _run_ip(cloud, 'bridge vlan add dev %s vid %d'
-                % (uplink, network.vlan), '配置上联 tagged VLAN')
+        # VLAN 子接口已经把 tag 剥掉了，进桥的帧是 untagged，
+        # 所以这个口要按 access（pvid untagged）配，而不是 tagged。
+        _run_ip(cloud, 'bridge vlan add dev %s vid %d pvid untagged'
+                % (uplink, network.vlan), '配置上联 VLAN（untagged）')
         cloud.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true' % uplink)
         _run_ip(cloud, 'ip link set dev %s up' % uplink, '启用 VLAN 上联')
 
