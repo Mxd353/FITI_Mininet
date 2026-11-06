@@ -141,6 +141,10 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
             if network.vpn == 'l3':
                 _add(commands[e], names, 'vlan_map', 'map_l3',
                      [network.vlan], [network.id])
+                if cfg.access_vtep:
+                    # 经 Linux VTEP 的切片：E 出方向要压外层 QinQ tag
+                    _add(commands[e], names, 'qinq_map', 'qinq_push',
+                         [network.vlan])
                 if cfg.e_vxlan(network):
                     _add(commands[e], names, 'vni_map', 'map_l3',
                          [network.id], [network.id])
@@ -551,9 +555,12 @@ def _configure_vtep(net, cfg, site):
 
     PM --VXLAN(VNI=net)--> V_x --VLAN--> S1 --> E
 
-    VTEP 用两条上联，避免“同一条线上既要终结 underlay、又要做桥 trunk”：
+    VTEP 用两条上联，避免“同一条线上既要终结 underlay、又要做 QinQ trunk”：
     eth0 跑 underlay（VLAN 4000，u4000 子接口），
-    eth1 直接进桥，由桥按 VID 打 tag（不能再用 VLAN 子接口，否则双 tag）。
+    eth1 上只叠一个外层子接口 qinq3500，再把它作为桥端口按 VID 打内层 tag，
+    于是出物理口就是 3500 + <切片 VLAN> 的双层 tag。
+
+    注意：eth1 不能再进桥（否则桥会在物理口只打一层 tag）。
     """
     vtep = net.get(vtep_name(site))
     e_mac = _host_mac(net.get(e_name(site)), s1_name(site))
@@ -581,15 +588,19 @@ def _configure_vtep(net, cfg, site):
     vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1'
              % underlay_intf.name)
 
-    # 业务 trunk：原设备进桥，由桥打 tag
-    _run_ip(vtep, 'ip link set dev %s master %s'
-            % (trunk_intf.name, bridge), 'VTEP trunk 进桥')
-    for network in cfg.l3_networks_for_site(site):
-        _run_ip(vtep, 'bridge vlan add dev %s vid %d'
-                % (trunk_intf.name, network.vlan), 'VTEP trunk tagged VLAN')
-    vtep.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
-             % trunk_intf.name)
+    # 业务 trunk：物理口不进桥，只在它上面叠一个外层 VLAN 子接口
     _run_ip(vtep, 'ip link set dev %s up' % trunk_intf.name, '启用 VTEP trunk')
+
+    qinq_outer = 'qinq3500'
+    vtep.cmd('ip link del %s 2>/dev/null || true' % qinq_outer)
+    _run_ip(vtep, 'ip link add link %s name %s type vlan id %d'
+            % (trunk_intf.name, qinq_outer, cfg.qinq_outer),
+            '创建 QinQ 外层子接口')
+    _run_ip(vtep, 'ip link set dev %s up' % qinq_outer, '启用 QinQ 外层')
+    vtep.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % qinq_outer)
+    _run_ip(vtep, 'ip link set dev %s master %s' % (qinq_outer, bridge),
+            'QinQ 外层接入 VTEP 桥')
+    vtep.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true' % qinq_outer)
 
     for network in cfg.l3_networks_for_site(site):
         vx = 'vx_vtep_%s_%d' % (site.abbr, network.id)
@@ -615,8 +626,11 @@ def _configure_vtep(net, cfg, site):
                         % (cfg.cloud_mac(network, site, host_id, endpoint),
                            vx, cfg.access_address(site, host_id)),
                         'VTEP 到 PM 的 FDB')
-        _run_ip(vtep, 'bridge fdb replace %s dev %s master static'
-                % (e_mac, trunk_intf.name), 'VTEP 到 E 的静态 FDB')
+        _run_ip(vtep, 'bridge vlan add dev %s vid %d'
+                % (qinq_outer, network.vlan), 'VTEP 桥内层 VLAN')
+        _run_ip(vtep, 'bridge fdb replace %s dev %s vlan %d master static'
+                % (e_mac, qinq_outer, network.vlan),
+                'VTEP 到 E 的静态 FDB')
 
 
 def _configure_cloud_interfaces(net, cfg):

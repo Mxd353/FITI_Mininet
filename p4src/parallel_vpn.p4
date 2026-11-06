@@ -21,6 +21,7 @@
 const bit<16> ETHERTYPE_VLAN = 0x8100;
 const bit<16> ETHERTYPE_IPV6 = 0x86dd;
 const bit<12> VLAN_NONE = 0;
+const bit<12> QINQ_OUTER_VLAN = 3500;
 const bit<12> PARALLEL_VLAN_MIN = 3501;
 const bit<12> PARALLEL_VLAN_MAX = 3900;
 const bit<8>  IPPROTO_SRH = 43;
@@ -87,6 +88,7 @@ header vxlan_t {
 struct headers_t {
     ethernet_t ethernet;
     vlan_t     vlan;
+    vlan_t     vlan_inner;
     ipv6_t     ipv6;
     srh_t      srh;
     srh_segment_t segment0;
@@ -128,6 +130,15 @@ parser ParserImpl(packet_in packet,
     state parse_vlan {
         packet.extract(hdr.vlan);
         transition select(hdr.vlan.etherType) {
+            ETHERTYPE_VLAN: parse_vlan_inner;
+            ETHERTYPE_IPV6: parse_ipv6;
+            default: accept;
+        }
+    }
+
+    state parse_vlan_inner {
+        packet.extract(hdr.vlan_inner);
+        transition select(hdr.vlan_inner.etherType) {
             ETHERTYPE_IPV6: parse_ipv6;
             default: accept;
         }
@@ -300,6 +311,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.ethernet.srcAddr = hdr.inner_ethernet.srcAddr;
         hdr.ethernet.etherType = hdr.inner_ethernet.etherType;
         hdr.vlan.setInvalid();
+        hdr.vlan_inner.setInvalid();
         if (hdr.inner_ipv6.isValid()) {
             hdr.ipv6.version = hdr.inner_ipv6.version;
             hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
@@ -400,6 +412,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.segment1.setInvalid();
 
         hdr.vlan.setInvalid();
+        hdr.vlan_inner.setInvalid();
         hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
@@ -445,6 +458,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.segment1.sid = via_sid;
 
         hdr.vlan.setInvalid();
+        hdr.vlan_inner.setInvalid();
         hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
@@ -567,6 +581,7 @@ control IngressImpl(inout headers_t hdr,
             // Otherwise the packet is untagged but Ethernet still says 0x8100,
             // and the receiver misinterprets the IPv6 header as a VLAN tag.
             hdr.vlan.setInvalid();
+            hdr.vlan_inner.setInvalid();
             hdr.ethernet.etherType = ETHERTYPE_IPV6;
         } else {
             hdr.vlan.setValid();
@@ -574,6 +589,7 @@ control IngressImpl(inout headers_t hdr,
             hdr.vlan.dei = 0;
             hdr.vlan.vid = out_vlan;
             hdr.vlan.etherType = ETHERTYPE_IPV6;
+            hdr.vlan_inner.setInvalid();
             hdr.ethernet.etherType = ETHERTYPE_VLAN;
         }
     }
@@ -605,6 +621,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.vlan.dei = 0;
         hdr.vlan.vid = out_vlan;
         hdr.vlan.etherType = ETHERTYPE_IPV6;
+        hdr.vlan_inner.setInvalid();
         if (hdr.inner_ipv6.isValid()) {
             hdr.ipv6.version = hdr.inner_ipv6.version;
             hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
@@ -629,6 +646,7 @@ control IngressImpl(inout headers_t hdr,
         meta.vrf_id = vrf_id;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
         hdr.vlan.setInvalid();
+        hdr.vlan_inner.setInvalid();
         if (hdr.inner_ipv6.isValid()) {
             hdr.ipv6.version = hdr.inner_ipv6.version;
             hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
@@ -697,6 +715,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.segment1.setInvalid();
 
         hdr.vlan.setInvalid();
+        hdr.vlan_inner.setInvalid();
         hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
@@ -724,6 +743,7 @@ control IngressImpl(inout headers_t hdr,
             hdr.ethernet.etherType = ETHERTYPE_VLAN;
         } else {
             hdr.vlan.setInvalid();
+            hdr.vlan_inner.setInvalid();
         }
         if (hdr.inner_ipv6.isValid()) {
             hdr.ipv6.version = hdr.inner_ipv6.version;
@@ -832,6 +852,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.vxlan.reserved2 = 0;
 
         hdr.vlan.setInvalid();
+        hdr.vlan_inner.setInvalid();
         hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
@@ -850,6 +871,7 @@ control IngressImpl(inout headers_t hdr,
             hdr.vlan.etherType = hdr.inner_vlan.etherType;
         } else {
             hdr.vlan.setInvalid();
+            hdr.vlan_inner.setInvalid();
         }
         if (hdr.inner_ipv6.isValid()) {
             hdr.ipv6.version = hdr.inner_ipv6.version;
@@ -954,6 +976,10 @@ control IngressImpl(inout headers_t hdr,
         meta.ingress_port = standard_metadata.ingress_port;
 
         port_cfg.apply();
+        // QinQ：外层是接入域，切片标识取内层 VLAN
+        if (hdr.vlan_inner.isValid()) {
+            meta.vlan_id = hdr.vlan_inner.vid;
+        }
         if (meta.bad_srh == 1) {
             drop();
         }
@@ -1075,6 +1101,7 @@ control EgressImpl(inout headers_t hdr,
         hdr.segment1.setInvalid();
 
         hdr.vlan.setInvalid();
+        hdr.vlan_inner.setInvalid();
         hdr.ethernet.srcAddr = smac;
         hdr.ethernet.dstAddr = dmac;
         hdr.ethernet.etherType = ETHERTYPE_IPV6;
@@ -1100,6 +1127,7 @@ control EgressImpl(inout headers_t hdr,
         if (hdr.vlan.isValid()) {
             hdr.ethernet.etherType = hdr.vlan.etherType;
             hdr.vlan.setInvalid();
+            hdr.vlan_inner.setInvalid();
         }
     }
 
@@ -1120,6 +1148,7 @@ control EgressImpl(inout headers_t hdr,
         if (hdr.vlan.isValid()) {
             hdr.ethernet.etherType = hdr.vlan.etherType;
             hdr.vlan.setInvalid();
+            hdr.vlan_inner.setInvalid();
         }
     }
 
@@ -1142,11 +1171,43 @@ control EgressImpl(inout headers_t hdr,
         default_action = drop;
     }
 
+    // QinQ：只有经 Linux VTEP 接入的 L3 切片才加外层 tag。
+    // 内层 tag 已由 ingress 写好（vid = 切片网络 ID + 3500）。
+    action qinq_push() {
+        hdr.vlan_inner.setValid();
+        hdr.vlan_inner.pcp = hdr.vlan.pcp;
+        hdr.vlan_inner.dei = hdr.vlan.dei;
+        hdr.vlan_inner.vid = hdr.vlan.vid;
+        hdr.vlan_inner.etherType = hdr.vlan.etherType;
+        hdr.vlan.vid = QINQ_OUTER_VLAN;
+        hdr.vlan.etherType = ETHERTYPE_VLAN;
+        hdr.ethernet.etherType = ETHERTYPE_VLAN;
+    }
+
+    action qinq_nop() {
+    }
+
+    table qinq_map {
+        key = {
+            hdr.vlan.vid: exact;
+        }
+        actions = {
+            qinq_push;
+            qinq_nop;
+        }
+        size = 4096;
+        default_action = qinq_nop;
+    }
+
     apply {
         if (meta.l2_bum == 1) {
             l2_rep_sid.apply();
         }
         egress_port.apply();
+        // 出方向 QinQ：表中登记过的切片才压外层 3500
+        if (hdr.vlan.isValid()) {
+            qinq_map.apply();
+        }
         // 防环：不要把帧从入口原样送回。SRv6 transit（waypoint）
         // 例外——它必须从进来的核心口再发出去。
         if (meta.transit == 0 &&
@@ -1169,6 +1230,7 @@ control DeparserImpl(packet_out packet, in headers_t hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.vlan);
+        packet.emit(hdr.vlan_inner);
         packet.emit(hdr.ipv6);
         packet.emit(hdr.srh);
         packet.emit(hdr.segment0);

@@ -64,6 +64,8 @@ class ParallelConfig:
     access_mode: str = 'vlan'
     #: access_mode=vxlan 时，是否用一台 Linux VTEP 先终结 VXLAN 再交给 E。
     access_vtep: bool = False
+    #: access_vtep=True 时，VTEP↔E 用 QinQ，这是外层 tag（内层是切片 VLAN）。
+    qinq_outer: int = 3500
 
     def site(self, abbr: str) -> Site:
         for item in self.sites:
@@ -395,6 +397,9 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     if access_mode not in ('vlan', 'vxlan'):
         raise ValueError('access_mode 必须是 vlan/vxlan: %s' % access_mode)
     access_vtep = bool(raw.get('access_vtep', False))
+    qinq_outer = int(raw.get('qinq_outer', 3500))
+    if not 1 <= qinq_outer <= 4094:
+        raise ValueError('qinq_outer 必须是 1-4094: %s' % qinq_outer)
     fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
     if not os.path.isabs(fiti_topology):
         fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)
@@ -426,6 +431,7 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
         te_paths=te_paths,
         access_mode=access_mode,
         access_vtep=access_vtep,
+        qinq_outer=qinq_outer,
     )
 
 
