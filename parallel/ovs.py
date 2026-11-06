@@ -30,7 +30,9 @@ MAX_WORKERS = max(1, int(os.environ.get('PARALLEL_OVS_WORKERS', '16')))
 ALL_VLANS = '1-4094'
 
 #: 需求文档：S2 上行拒绝并行网络 VLAN 3501-3900。
-NON_PARALLEL_VLANS = '1-3500,3901-4094'
+#: 接入 QinQ 之后，外层 3500 也属于并行网络的编码（3500 + 内层切片 VLAN），
+#: 因此一并拒绝，下界收到 3499。
+NON_PARALLEL_VLANS = '1-3499,3901-4094'
 
 PARALLEL_VLAN_MIN = 3501
 PARALLEL_VLAN_MAX = 3900

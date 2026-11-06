@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from parallel.config import DEFAULT_CONFIG, load_config
+from parallel.ovs import NON_PARALLEL_VLANS
 
 PHY_PORT_L3 = '100GE3/0/40'
 PHY_PORT_L2 = 'ten-gigabitethernet 3/1/1'
@@ -135,7 +136,8 @@ def render_ovs(cfg):
         for host_id in cfg.host_ids():
             lines.append('S1_%s  cl_%s_%d口  trunks=1-4094'
                          % (site.abbr, site.abbr, host_id))
-        lines.append('S2_%s  A口        trunks=1-3500,3901-4094' % site.abbr)
+        lines.append('S2_%s  A口        trunks=%s'
+                     % (site.abbr, NON_PARALLEL_VLANS))
         for host_id in cfg.host_ids():
             lines.append('S2_%s  cl_%s_%d口  trunks=1-4094'
                          % (site.abbr, site.abbr, host_id))

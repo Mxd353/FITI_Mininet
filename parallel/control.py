@@ -551,9 +551,9 @@ def _configure_cloud_host(net, cfg, site, host_id):
 
 
 def _configure_vtep(net, cfg, site):
-    """Linux VTEP：终结 PM 的接入 VXLAN，再用 VLAN 交给 E。
+    """Linux VTEP：终结 PM 的接入 VXLAN，再用 QinQ 交给 E。
 
-    PM --VXLAN(VNI=net)--> V_x --VLAN--> S1 --> E
+    PM --VXLAN(VNI=net)--> V_x --[3500][切片 VLAN]--> S1 --> E
 
     VTEP 用两条上联，避免“同一条线上既要终结 underlay、又要做 QinQ trunk”：
     eth0 跑 underlay（VLAN 4000，u4000 子接口），

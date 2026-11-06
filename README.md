@@ -1,13 +1,15 @@
 # FITI 并行网络仿真
 
-> **版本说明（feature/vxlan-access 分支）**
+> **版本说明（feature/qinq-access 分支）**
 >
-> 本分支是“接入 VXLAN”版本：PM 通过 VXLAN（VNI = 网络 ID）接入，由本站点的
-> Linux VTEP 终结后再以 VLAN 交给 E，E 仍然是 BMv2/P4（SRv6 BE/TE、L2 over SRv6
+> 本分支是“接入 VXLAN + QinQ”版本：PM 通过 VXLAN（VNI = 网络 ID）接入，由本站点的
+> Linux VTEP 终结后再以 QinQ 双层 tag（外层 3500 + 内层切片 VLAN）交给 E，
+> E 仍然是 BMv2/P4（SRv6 BE/TE、L2 over SRv6
 > 不变）。主线 `feature/parallel-network` 保持“PM 直接用 VLAN 接入”，两者不合并。
 >
 > 运行方式与主线相同：`make parallel-run-min` / `make verify-min`；
-> 切换版本：`git checkout feature/parallel-network` 或 `feature/vxlan-access`。
+> 切换版本：`git checkout feature/parallel-network`、`feature/vxlan-access`
+> （单层 VLAN）或 `feature/qinq-access`（当前，QinQ）。
 
 本分支只包含 **中关村主干网并行网络仿真**。
 
@@ -209,16 +211,34 @@ underlay：fd00:0:{站点}:9::1（PM-A）/ ::2（PM-B）
 `access_mode` 为 `vxlan` 时，L3VPN 的接入段不再用业务 VLAN，而是：
 
 ```text
-PM --VXLAN(VNI = 网络 ID)--> V_<站点>(Linux VTEP) --VLAN 3501..--> S1 --> E(BMv2) --SRv6-->
+PM --VXLAN(VNI = 网络 ID)--> V_<站点>(Linux VTEP) --[3500][切片 VLAN]--> S1 --> E(BMv2) --SRv6-->
 ```
 
 - PM 侧：每个 L3 网络一个 VXLAN 设备（`vx_*`），VNI = 网络 ID，
   underlay 走 `u4000`（VLAN 4000），FDB 指向本站点 VTEP 和另一台 PM；
 - `V_<站点>`：Linux netns，两条上联到 S1——`eth0` 跑 underlay（`u4000`），
-  `eth1` 原设备直接进桥（由桥按 VID 打 tag）；VXLAN 解封装后以业务 VLAN
-  交给 E，反向则由 E 的 VLAN 帧进桥、再封 VXLAN 回 PM；
-- E 仍然只看到 VLAN，SRv6（含 L2 over SRv6、TE waypoint）完全保留；
-- L2VPN 暂时仍走 VLAN + 站点内 VXLAN，不经过 VTEP。
+  `eth1` 物理口不进桥，只在它上面叠一个外层子接口 `qinq3500`，再把该子接口
+  作为桥端口按内层 VID 打 tag。于是出物理口就是 `3500 + <切片 VLAN>` 的
+  双层 tag（QinQ），入方向 `3500` 被子接口剥掉、桥再按内层 VID 转给对应 VXLAN；
+- E：接入口同时接受单层 tag（L2VPN 直连 PM）和双层 tag（经 VTEP 的 L3VPN），
+  `vlan_map` 用**内层** VLAN 查 VRF/VSI；出方向只对登记过的 L3 切片压外层 3500，
+  L2/核心/公网方向保持原样，SRv6（含 L2 over SRv6、TE waypoint）一行未改；
+- L2VPN 仍然走 VLAN + 站点内 VXLAN，不经过 VTEP。
+
+### 为什么用 QinQ
+
+单层 VLAN 只有 12 bit，切片标识最多 4094 个（还要扣掉 underlay 4000 和余量，
+实际规划 400 个）。QinQ 把「接入域（外层）」和「切片（内层）」分开编码：
+
+| 段 | 标识 | 容量 |
+| --- | --- | --- |
+| PM ↔ VTEP | VXLAN VNI | 24 bit |
+| VTEP ↔ E | QinQ 外层 3500 + 内层切片 VLAN | 每个外层 4094 个切片 |
+| E 内部 | 内层 VLAN → `vlan_map` / `vrf_map` | 表大小 4096 / 16384 |
+
+外层值可配（`qinq_outer`），换一个外层就多 4094 个切片，因此实际容量是
+`4094 × 外层数`。真正需要扩容时，把外层从 3500 扩成 3500/3501/... 即可，
+E 侧只要把 `vlan_map` 的键从「内层 VID」改成「(外层, 内层)」。
 
 为什么要有这个 VTEP：BMv2 是软件数据面，**不会计算 IPv6 UDP 校验和**
 （IPv6 下校验和为 0 会被内核丢包），把 VXLAN 终结放到内核里就绕过了这个限制。
@@ -228,7 +248,8 @@ PM --VXLAN(VNI = 网络 ID)--> V_<站点>(Linux VTEP) --VLAN 3501..--> S1 --> E(
 
 ```json
 "access_mode": "vxlan",
-"access_vtep": true
+"access_vtep": true,
+"qinq_outer": 3500
 ```
 
 `access_vtep=false` 时 E 自己终结 VXLAN（P4 的 `vni_map` 路径），
@@ -237,7 +258,7 @@ PM --VXLAN(VNI = 网络 ID)--> V_<站点>(Linux VTEP) --VLAN 3501..--> S1 --> E(
 ## 接入交换机（OVS）
 
 - `S1` 上行放行并行 VLAN 3501-3900；
-- `S2` 上行拒绝并行 VLAN 3501-3900，其余 VLAN 正常；
+- `S2` 上行拒绝并行 VLAN 3500-3900（3500 是 QinQ 外层），其余 VLAN 正常；
 - VLAN 转发、MAC 学习、广播泛洪由 OVS 完成；
 - 接入交换机不再下发静态 `l2_fib`，也不再创建 multicast group；
 - 只有 `E` 运行 P4 并占用 Thrift 端口。
@@ -489,7 +510,7 @@ make parallel-stop            # 清理
 ```bash
 make parallel-stop
 make verify-dry
-make verify-min      # 4 站点，39 条用例
+make verify-min      # 4 站点，42 条用例
 make verify-full     # 41 站点
 ```
 

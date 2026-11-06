@@ -152,6 +152,27 @@ cases:
         command: sh -c 'tcpdump -r /tmp/vxcap.pcap -nn 2>/dev/null | grep -q VXLAN && tcpdump -r /tmp/vxcap.pcap -nn 2>/dev/null | grep -qE "vni 1(,|$)" && echo VXLAN_OK'
         expect_contains: VXLAN_OK
 
+  - name: qinq-access-double-tag
+    tags: [core, l3, packet, qinq]
+    requires_sites: [sh]
+    description: 经 Linux VTEP 的 L3 切片在 VTEP↔E 段是 QinQ 双层 tag（外层 3500 + 内层切片 VLAN）
+    steps:
+      - type: exec
+        node: V_bj
+        command: sh -c 'rm -f /tmp/qinq.pcap; setsid timeout 8 tcpdump -i V_bj-eth1 -U -s0 -w /tmp/qinq.pcap "vlan 3500" >/dev/null 2>&1 & sleep 1; echo CAPTURE_STARTED'
+        expect_contains: CAPTURE_STARTED
+      - type: ping
+        node: cl_bj_1
+        iface: 240a:a806:1:1::10
+        target: 240a:a806:1:2::10
+        expect: pass
+      - type: sleep
+        seconds: 3
+      - type: exec
+        node: V_bj
+        command: sh -c 'tcpdump -r /tmp/qinq.pcap -nn -e -vv 2>/dev/null | grep -q "vlan 3500.*vlan 3501" && echo QINQ_OK'
+        expect_contains: QINQ_OK
+
   - name: srv6-te-waypoint
     tags: [core, l3, te]
     requires_sites: [sh, jnn]

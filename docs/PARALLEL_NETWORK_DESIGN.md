@@ -239,11 +239,14 @@ S1/S2 是 OVS bridge，VLAN 策略通过 trunk 列表实现：
 ```text
 S1  E 口 / cloud 口   trunks=1-4094
 S2  cloud 口          trunks=1-4094
-S2  A 口              trunks=1-3500,3901-4094
+S2  A 口              trunks=1-3499,3901-4094
 ```
 
 OVS 的端口级 VLAN 过滤同时作用于入向和出向，等价于 P4 里
 `uplink_filter` 的 `deny_parallel`，但不需要为接入交换机维护表项。
+
+接入段改用 QinQ 后，外层 3500 也属于并行网络编码（`3500 + 内层切片 VLAN`），
+因此 S2 上行的拒绝下界从 3500 收到 3499；3400-3499 仍作为定制并行网络保留。
 
 如果后续需要模拟 LACP/链路聚合，可在 netns 中增加 bond，但首期不建议，
 因为 Mininet 对 bond 和硬件卸载的模拟有限。

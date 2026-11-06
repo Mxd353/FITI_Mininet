@@ -7,7 +7,7 @@
 ```bash
 make parallel-stop      # 清理旧实例
 make verify-dry         # 免 root，只校验用例与配置
-make verify-min         # 4 站点，41 条用例（故障用例需 --tag faults）
+make verify-min         # 4 站点，42 条用例（故障用例需 --tag faults）
 make verify-full        # 41 站点
 ```
 
@@ -50,7 +50,7 @@ IPv6 接口 down 之后地址和路由会被删除，up 也不会自动恢复，
 
 | 文件 | 内容 | 数量 |
 | --- | --- | --- |
-| `01-reachability.yaml` | L3VPN/L2VPN 互通、多端点、VXLAN、SRv6 TE、BUM、公网、隧道报文格式 | 18 |
+| `01-reachability.yaml` | L3VPN/L2VPN 互通、多端点、VXLAN、QinQ 双层 tag、SRv6 TE、BUM、公网、隧道报文格式 | 19 |
 | `02-isolation.yaml` | 跨网络必须 100% 丢包 | 4 |
 | `03-vlan.yaml` | S1 放行、S2 拒绝并行 VLAN | 4 |
 | `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 9 |
@@ -123,7 +123,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 
 | 配置 | 规模 | 结果 | 说明 |
 | --- | --- | --- | --- |
-| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns + 4 VTEP | 41/41 通过 | 用例耗时约 84 秒 |
+| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns + 4 VTEP | 42/42 通过 | 用例耗时约 85 秒 |
 | `parallel-min.json --tag faults` | 同上 | 1/1 通过 | netem 注入 100% 丢包后恢复 |
 | `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns + 41 VTEP | 41/41 通过 | 用例耗时约 88 秒，峰值内存约 4.5 GB |
 
@@ -143,6 +143,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | L2VPN VNI 隔离 | `iso-l2-net3-to-net4` | ping 100% loss |
 | L2VPN 隧道内层不带业务 VLAN | `l2-tunnel-no-inner-vlan` | `C_bj` 抓 SRv6 包，内层无 `vlan` |
 | 同站点流量走 VXLAN | `vxlan-intra-site` | `cl_bj_1` 抓 `udp 4789`，VNI = 网络 ID |
+| VTEP↔E 用 QinQ | `qinq-access-double-tag` | `V_bj` 抓 `eth1`，报文为 `vlan 3500` + `vlan 3501` |
 | SRv6 TE 经 waypoint | `srv6-te-waypoint` | waypoint C 上抓包，`segleft` 1→0、DA 改写 |
 | 真实业务流量（TCP/HTTP） | `tcp-*`、`http-*` | iperf 传输量非零、curl 200 + 1MB |
 | 端点 MTU 覆盖 SRv6 开销 | `mtu-endpoint-vs-srv6` | 1352 字节通、1400 字节被拒 |
@@ -183,12 +184,32 @@ sudo ip netns exec <cl_bj_1 的 ns> tcpdump -i any -nn 'udp port 4789'
 `access_vtep=true`：
 
 - PM 用 VXLAN（VNI = 网络 ID）把业务帧送到本站点的 Linux VTEP；
-- VTEP 解封装后以 VLAN 3501-3900 交给 E，E 再做 SRv6；
+- VTEP 解封装后以 **QinQ 双层 tag**（外层 3500 + 内层切片 VLAN）交给 E，
+  E 用内层 VLAN 查 VRF/VSI，再做 SRv6；
 - 好处是把 VXLAN 终结放在内核里（校验和由内核算），E 仍然是纯 P4/SRv6；
 - L2VPN 暂时仍走 VLAN（不经 VTEP），L2 跨站点仍是 SRv6。
 
-注意：PM 的业务 VLAN 子接口进桥时必须按 `pvid untagged` 配（tag 已被子接口剥掉），
-配成 tagged 会让帧落到 VLAN 1 被丢弃——这是排查过的真实坑。
+VTEP 侧的关键配置（`parallel/control.py::_configure_vtep`）：
+
+- 物理 trunk（`eth1`）**不进桥**，只在它上面叠 `qinq3500 = vlan 3500 on eth1`；
+- `qinq3500` 作为桥端口，对每个 L3 切片 `bridge vlan add dev qinq3500 vid <vlan>`，
+  于是桥在子接口上打内层 tag、子接口再压外层 3500，物理口就是 `3500 + <vlan>`；
+- VXLAN 设备保持 `pvid untagged`，桥内看到的是 untagged 业务帧。
+
+E 侧（`p4src/parallel_vpn.p4`）：
+
+- `parse_vlan` 遇到第二层 802.1Q 进入 `parse_vlan_inner`，接入口因此同时兼容
+  单层（L2VPN 直连）和双层（经 VTEP 的 L3VPN）；
+- ingress 在 `port_cfg` 之后用内层 VID 覆盖 `meta.vlan_id`，`vlan_map` 键不变；
+- egress 新增 `qinq_map`：只有登记过的 L3 切片才把单层 tag 包成
+  `3500 + <切片 VLAN>`，L2/核心/公网方向一律不压外层。
+
+两个排查过的真实坑：
+
+1. PM 的业务 VLAN 子接口进桥时必须按 `pvid untagged` 配（tag 已被子接口剥掉），
+   配成 tagged 会让帧落到 VLAN 1 被丢弃；
+2. VTEP↔E 的 QinQ 不能“把物理口放进桥、再在桥上打两层 tag”——Linux 桥每个
+   端口只打一层，必须让物理口留在桥外，用 VLAN 子接口当桥端口。
 
 ## SRv6 TE（静态多段）
 

@@ -259,7 +259,7 @@ class RenderTest(unittest.TestCase):
         lines = render_ovs(self.cfg).strip().splitlines()
         hosts = self.cfg.hosts_per_site
         self.assertEqual(len(lines), len(self.cfg.sites) * (2 + 2 * hosts))
-        self.assertTrue(any('1-3500,3901-4094' in line for line in lines))
+        self.assertTrue(any('1-3499,3901-4094' in line for line in lines))
 
     def test_summary_networks(self):
         import json

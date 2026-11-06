@@ -124,8 +124,9 @@ class OvsConfigTest(unittest.TestCase):
         intf = switch.intf_to(e_name(self.cfg.site('bj')))
         set_trunk(switch, intf, NON_PARALLEL_VLANS)
         vlans = trunk_vlans(switch, intf)
-        self.assertIn(3500, vlans)
+        self.assertIn(3499, vlans)
         self.assertIn(3901, vlans)
+        self.assertNotIn(3500, vlans)  # QinQ 外层也属于并行网络编码
         self.assertNotIn(PARALLEL_VLAN_MIN, vlans)
 
     def test_configure_policies(self):
@@ -149,7 +150,7 @@ class OvsConfigTest(unittest.TestCase):
 
             vlans = trunk_vlans(s2, uplink)
             self.assertNotIn(PARALLEL_VLAN_MIN, vlans)
-            self.assertIn(3500, vlans)
+            self.assertIn(3499, vlans)
             self.assertIn(3901, vlans)
 
 
