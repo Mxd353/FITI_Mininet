@@ -397,11 +397,12 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     if access_mode not in ('vlan', 'vxlan'):
         raise ValueError('access_mode 必须是 vlan/vxlan: %s' % access_mode)
     access_vtep = bool(raw.get('access_vtep', False))
-    #: QinQ 外层必须落在“定制并行网络 VLAN”（3400-3500）里：
-    #: S2 上行按 1-3499,3901-4094 放行，选到 3501+ 就会被当成业务 VLAN 泄漏。
+    #: QinQ 外层固定 3500：它是“定制并行网络 VLAN”的上界，S2 上行现在就拒绝它。
+    #: 将来要扩成多外层（3500/3499/...）时，必须同时扩大 ovs.NON_PARALLEL_VLANS
+    #: 的拒绝区间，并把 E 的 vlan_map 键从“内层 VID”改成“(外层, 内层)”。
     qinq_outer = int(raw.get('qinq_outer', 3500))
-    if not 3400 <= qinq_outer <= 3500:
-        raise ValueError('qinq_outer 必须在 3400-3500: %s' % qinq_outer)
+    if qinq_outer != 3500:
+        raise ValueError('qinq_outer 目前只支持 3500: %s' % qinq_outer)
     fiti_topology = str(raw.get('fiti_topology', 'fiti.json'))
     if not os.path.isabs(fiti_topology):
         fiti_topology = os.path.join(os.path.dirname(path), fiti_topology)

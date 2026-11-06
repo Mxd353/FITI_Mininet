@@ -125,7 +125,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | --- | --- | --- | --- |
 | `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，18 netns + 4 VTEP | 42/42 通过 | 用例耗时约 85 秒 |
 | `parallel-min.json --tag faults` | 同上 | 1/1 通过 | netem 注入 100% 丢包后恢复 |
-| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns + 41 VTEP | 41/41 通过 | 用例耗时约 88 秒，峰值内存约 4.5 GB |
+| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns + 41 VTEP | 42/42 通过 | 用例耗时约 94 秒，峰值内存约 4.5 GB |
 
 失败用例会自动 dump 相关节点的 `ip -6 route/rule/addr` 和 P4 表项，
 放在 `runs/<时间戳>/evidence/`。
