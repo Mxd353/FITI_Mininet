@@ -196,6 +196,27 @@ cases:
         command: sh -c 'tcpdump -r /tmp/shim.pcap -nn -vv 2>/dev/null | grep -qE "fd00:0:1:8::1[^ ]*\.4789 > .*udp sum ok" && echo SHIM_OK'
         expect_contains: SHIM_OK
 
+  - name: l2-access-vxlan
+    tags: [core, l2, packet, vxlan]
+    requires_sites: [sh]
+    description: L2VPN 的接入段也用 VXLAN（VNI = 网络 ID），E 直接终结后走 SRv6
+    steps:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'rm -f /tmp/l2vx.pcap; setsid timeout 10 tcpdump -i u4000 -U -s0 -w /tmp/l2vx.pcap "udp port 4789" >/dev/null 2>&1 & sleep 1; echo CAPTURE_STARTED'
+        expect_contains: CAPTURE_STARTED
+      - type: ping
+        node: cl_bj_1
+        iface: 240a:a806:3:1::100
+        target: 240a:a806:3:1::104
+        expect: pass
+      - type: sleep
+        seconds: 3
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'tcpdump -r /tmp/l2vx.pcap -nn -vv 2>/dev/null > /tmp/l2vx.txt; grep -qE "vni 3(,|$)" /tmp/l2vx.txt && grep -q "udp sum ok" /tmp/l2vx.txt && echo L2VXLAN_OK'
+        expect_contains: L2VXLAN_OK
+
   - name: srv6-te-waypoint
     tags: [core, l3, te]
     requires_sites: [sh, jnn]

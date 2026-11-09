@@ -283,10 +283,27 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                     seen_sites.add(remote_site.id)
                     remote_sites.append(remote_site)
 
+            # L2 的 VSI 键：VXLAN 接入用 VNI（24 bit），VLAN 接入用 VID。
+            l2_vxlan = cfg.l2_vxlan(network)
+            vsi = network.id if l2_vxlan else network.vlan
+
             if cfg.l2_tunnel == 'srv6':
-                _add(commands[e], names, 'local_sid', 'srv6_l2_decap',
-                     ['%s/128' % local_route.sid],
-                     [e_ports[s1], network.vlan])
+                if l2_vxlan:
+                    _add(commands[e], names, 'vni_map', 'map_l2_vsi',
+                         [network.id], [network.id])
+                    cloud1 = net.get(cloud_name(site, 1))
+                    _add(commands[e], names, 'local_sid',
+                         'srv6_l2_decap_vxlan',
+                         ['%s/128' % local_route.sid],
+                         [network.id, e_ports[s1],
+                          cfg.e_vtep_address(site),
+                          cfg.access_address(site, 1),
+                          macs[site.abbr]['e_s1'],
+                          _host_mac(cloud1, s1_name(site))])
+                else:
+                    _add(commands[e], names, 'local_sid', 'srv6_l2_decap',
+                         ['%s/128' % local_route.sid],
+                         [e_ports[s1], network.vlan])
                 for remote_site, mac_route in remote_mac_routes:
                     remote_route = evpn_routes.imet_route(
                         network.id, remote_site.abbr)
@@ -295,22 +312,22 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                             '站点 %s 缺少网络 %d 的远端 L2 路由'
                             % (remote_site.abbr, network.id))
                     _add(commands[e], names, 'l2_tunnel', 'srv6_l2_encap',
-                         [network.vlan, mac_route.mac],
+                         [vsi, mac_route.mac],
                          [local_route.sid, remote_route.sid,
                           macs[site.abbr]['e_c'], c_dmac, c_port])
 
-                group_id = network.vlan * 2
+                group_id = vsi * 2
                 nodes = [(remote_site.id, [c_port])
                          for remote_site in remote_sites]
                 _add_mc_group(commands[e], groups[e], group_id, nodes)
                 _add(commands[e], names, 'l2_bum', 'set_l2_bum',
-                     [network.vlan, e_ports[s1]], [group_id])
+                     [vsi, e_ports[s1]], [group_id])
                 for remote_site in remote_sites:
                     remote_route = evpn_routes.imet_route(
                         network.id, remote_site.abbr)
                     _add(commands[e], names, 'l2_rep_sid',
                          'srv6_l2_encap_egress',
-                         [network.vlan, remote_site.id],
+                         [vsi, remote_site.id],
                          [local_route.sid, remote_route.sid,
                           macs[site.abbr]['e_c'], c_dmac])
             else:
@@ -318,7 +335,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                 for remote_site, mac_route in remote_mac_routes:
                     dst_ip = 'fd00:0:%d:1::2' % remote_site.id
                     _add(commands[e], names, 'l2_tunnel', 'vxlan_encap',
-                         [network.vlan, mac_route.mac],
+                         [vsi, mac_route.mac],
                          [src_ip, dst_ip, macs[site.abbr]['e_c'],
                           c_dmac, c_port, network.id])
                 _add(commands[e], names, 'vxlan_map', 'vxlan_decap',
@@ -503,9 +520,13 @@ def _configure_cloud_host(net, cfg, site, host_id):
             underlay = _host_intf(cloud, cloud_name(site, peer_id))
             vx = cfg.vxlan_ifname(site, host_id, network)
             cloud.cmd('ip link del %s 2>/dev/null || true' % vx)
+            # L2 接入改成 VXLAN 后，同一 netns 里不能再用网络 ID 建站点内隧道，
+            # 换到 0x800000 | id 的高半区（只在本站点两台 PM 之间有意义）。
+            site_vni = (cfg.site_vni(network) if cfg.l2_vxlan(network)
+                        else network.id)
             _run_ip(cloud, 'ip link add %s type vxlan id %d local %s remote %s '
                     'dev %s dstport 4789 nolearning'
-                    % (vx, network.id, cfg.underlay_address(site, host_id),
+                    % (vx, site_vni, cfg.underlay_address(site, host_id),
                        cfg.underlay_address(site, peer_id), underlay.name),
                     '创建 VXLAN')
             _run_ip(cloud, 'ip link set dev %s mtu %d'
@@ -528,18 +549,48 @@ def _configure_cloud_host(net, cfg, site, host_id):
 
         if host_id != 1:
             continue
-        uplink = 'v%d' % network.vlan
-        cloud.cmd('ip link del %s 2>/dev/null || true' % uplink)
-        _run_ip(cloud, 'ip link add link %s name %s type vlan id %d'
-                % (parent.name, uplink, network.vlan), '创建 VLAN 子接口')
-        _run_ip(cloud, 'ip link set dev %s master %s' % (uplink, vlan_bridge),
-                'VLAN 上联接桥')
-        # VLAN 子接口已经把 tag 剥掉了，进桥的帧是 untagged，
-        # 所以这个口要按 access（pvid untagged）配，而不是 tagged。
-        _run_ip(cloud, 'bridge vlan add dev %s vid %d pvid untagged'
-                % (uplink, network.vlan), '配置上联 VLAN（untagged）')
-        cloud.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true' % uplink)
-        _run_ip(cloud, 'ip link set dev %s up' % uplink, '启用 VLAN 上联')
+        if cfg.l2_vxlan(network):
+            # L2 接入也走 VXLAN：PM-1 用 VNI = 网络 ID 的隧道交给 E。
+            ax = 'ax_%s_%d_%d' % (site.abbr, host_id, network.id)
+            cloud.cmd('ip link del %s 2>/dev/null || true' % ax)
+            _run_ip(cloud, 'ip link add %s type vxlan id %d local %s dev %s '
+                    'dstport 4789 nolearning'
+                    % (ax, network.id, cfg.access_address(site, host_id),
+                       access_uplink), '创建 L2 接入 VXLAN')
+            _run_ip(cloud, 'ip link set dev %s mtu %d'
+                    % (ax, cfg.endpoint_mtu), '设置 L2 接入 VXLAN MTU')
+            _run_ip(cloud, 'ip link set dev %s master %s' % (ax, vlan_bridge),
+                    'L2 接入 VXLAN 进桥')
+            _run_ip(cloud, 'bridge vlan add dev %s vid %d pvid untagged'
+                    % (ax, network.vlan), '配置 L2 接入 VXLAN 的内部 VLAN')
+            cloud.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true' % ax)
+            _run_ip(cloud, 'bridge link set dev %s learning off' % ax,
+                    '关闭 L2 接入 VXLAN 学习')
+            cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % ax)
+            _run_ip(cloud, 'ip link set dev %s type vxlan tos inherit' % ax,
+                    'L2 接入 VXLAN 继承 DSCP')
+            _run_ip(cloud, 'ip link set dev %s up' % ax, '启用 L2 接入 VXLAN')
+            _run_ip(cloud, 'bridge fdb replace %s dev %s dst %s'
+                    % (e_mac, ax, cfg.e_vtep_address(site)),
+                    'L2 接入到 E 的 FDB')
+            # L2 的目的 MAC 是远端 VM 自己，不像 L3 是网关 MAC；
+            # 远端/未知单播与广播统一走 E，由 E 做 SRv6。
+            _run_ip(cloud, 'bridge fdb append 00:00:00:00:00:00 dev %s dst %s'
+                    % (ax, cfg.e_vtep_address(site)), 'L2 接入泛洪到 E')
+        else:
+            uplink = 'v%d' % network.vlan
+            cloud.cmd('ip link del %s 2>/dev/null || true' % uplink)
+            _run_ip(cloud, 'ip link add link %s name %s type vlan id %d'
+                    % (parent.name, uplink, network.vlan), '创建 VLAN 子接口')
+            _run_ip(cloud, 'ip link set dev %s master %s'
+                    % (uplink, vlan_bridge), 'VLAN 上联接桥')
+            # VLAN 子接口已经把 tag 剥掉了，进桥的帧是 untagged，
+            # 所以这个口要按 access（pvid untagged）配，而不是 tagged。
+            _run_ip(cloud, 'bridge vlan add dev %s vid %d pvid untagged'
+                    % (uplink, network.vlan), '配置上联 VLAN（untagged）')
+            cloud.cmd('bridge vlan del dev %s vid 1 2>/dev/null || true'
+                      % uplink)
+            _run_ip(cloud, 'ip link set dev %s up' % uplink, '启用 VLAN 上联')
 
     if not vxlan_l3:
         cloud.cmd('sysctl -qw net.ipv6.conf.%s.disable_ipv6=1' % parent.name)

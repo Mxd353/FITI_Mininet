@@ -56,7 +56,7 @@ cases:
       - type: p4_entry
         switch: E_bj
         table: l2_tunnel
-        keys: [3503, "02:00:02:00:03:aa"]
+        keys: [3, "02:00:02:00:03:aa"]   # L2 VSI = VNI = 网络 ID
         present: true
       - type: evpn_withdraw
         route:

@@ -229,9 +229,11 @@ class ParallelEvpnAgent:
             if local_route is None:
                 raise AgentError('站点 %s 缺少网络 %d 的 L2 IMET 路由'
                                  % (site.abbr, network.id))
+            # L2 的 VSI 键：VXLAN 接入用 VNI（网络 ID），VLAN 接入用 VID。
+            vsi = network.id if self.cfg.l2_vxlan(network) else network.vlan
             if delete:
                 ops.append(self._del(e, 'l2_tunnel',
-                                     [network.vlan, route.mac]))
+                                     [vsi, route.mac]))
                 for cloud in cloud_hosts:
                     cloud.cmd('ip -6 neigh del %s dev %s'
                               % (route.ip, self.cfg.endpoint_ifname(
@@ -240,7 +242,7 @@ class ParallelEvpnAgent:
                 c = c_name(site)
                 ops.append(self._cmd(
                     e, 'l2_tunnel', 'srv6_l2_encap',
-                    [network.vlan, route.mac],
+                    [vsi, route.mac],
                     [local_route.sid, route.sid,
                      self.macs[site.abbr]['e_c'],
                      _host_mac(self.net.get(c), e), e_ports[c]]))

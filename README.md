@@ -202,23 +202,26 @@ VXLAN（vx_*）      : VNI = 网络 ID，local/remote = fd00:0:{站点}:9::1/::2
 | 同站点 VM → VM（跨 PM） | tap → bridge → VXLAN → 对端 bridge → tap | VXLAN（VNI = 网络 ID） |
 | 同 PM 的两个 VM | tap → bridge → tap | 普通以太网，不出桥 |
 | L3 VM → 其它站点 | tap → bridge → VXLAN（VNI = 网络 ID）→ S1 → E（解封装）→ SRv6 | 段内 VXLAN（underlay 是 VLAN 4000），跨站点 SRv6 |
-| L2 VM → 其它站点 | tap → bridge → VLAN → S1 → E → SRv6 | 段内 802.1Q，跨站点 SRv6（隧道内层不带 VLAN） |
-| 其它站点 → VM | E 解 SRv6 后按上面两条路径原路回到 PM | 同上 |
+| L2 VM → 其它站点 | tap → bridge → VXLAN（VNI = 网络 ID）→ S1 → E（解封装）→ SRv6 | 段内 VXLAN（underlay 是 VLAN 4000），跨站点 SRv6 |
+| 其它站点 → VM | E 解 SRv6 后再封 VXLAN 回 PM | 同上 |
 
-两种 VPN 的段内封装不同，原因是它们要区分的对象不同：
+两种 VPN 的段内封装现在都是 VXLAN（VNI = 网络 ID），区别只在 **E 拿 VNI 干什么**：
 
-- **L3VPN 用 VXLAN**：每台 PM 都有 `u4000` 接入 underlay，自己建一个
-  VXLAN（VNI = 网络 ID，对端是 E）。切片用 24 bit 的 VNI 标识，
-  不需要为每个切片分配 VLAN（整条链路只共用 underlay 的 VLAN 4000）；
+- **L3VPN**：`vni_map` 的 `map_l3` 把 VNI 映射成 VRF，按内层目的地址查 `l3_fib`
+  做 SRv6 封装；每台 PM 都有 `u4000` 接入 underlay、各自建 VXLAN 到 E，
   同站点和跨站点的 L3 流量都不必先绕到另一台 PM。
-- **L2VPN 用 VLAN**：L2 转发本来就是“按 VLAN 划分广播域”，PM↔E 这一段用
-  802.1Q 最直接；只有 PM-1 建业务 VLAN 上联（`v<vid>` 子接口），
-  PM-2 的站外 L2 流量先经站点内 VXLAN 到 PM-1 再出站点，
-  避免 S1 上出现重复帧。
+- **L2VPN**：`vni_map` 的 `map_l2_vsi` 把 VNI 当成 VSI，`l2_tunnel`/`l2_bum`
+  用同一把键查远端 SID，再整帧套进 SRv6（`next header = Ethernet`）。
+  L2 的目的 MAC 是远端 VM 自己（不是网关），所以只有 PM-1 建接入 VXLAN
+  （`ax_*`），并把“未知单播/广播”的 FDB 兜底指向 E；PM-2 的站外 L2 流量先经
+  站点内 VXLAN 到 PM-1 再出站点，避免 S1 上出现重复帧。
+
+站点内 PM↔PM 的 L2 隧道和接入隧道会在同一 netns 里同时存在，而内核不允许
+两个 VXLAN 设备复用同一个 VNI，所以站点内那段用 `0x800000 | 网络 ID`
+（只在本站点两台 PM 之间有意义）。
 
 跨站点这一段两种 VPN 都交给 E 做 SRv6：L3 是 SRH + 内层 IPv6，
-L2 是 SRH + `next header = Ethernet`（整帧套进 SRv6），
-所以“跨站点 SRv6”这句对两类流量都成立。
+L2 是 SRH + `next header = Ethernet`，所以“跨站点 SRv6”对两类流量都成立。
 
 地址和 MAC：
 
@@ -245,11 +248,13 @@ PM --VXLAN(VNI = 网络 ID)--> S1 --> E(BMv2)：P4 解封装 → VRF → SRv6
                       ↑ tc/eBPF shim：重算 IPv6/UDP 校验和
 ```
 
-- PM 侧和 `access_vtep=true` 一样：每个 L3 网络一个 VXLAN 设备，underlay 走 VLAN 4000；
-  区别是隧道对端是 **E**（`fd00:0:{站点}:8::1`）而不是 Linux VTEP；
-- E 用 `vni_map` 直接把 VNI 映射到 VRF（不再查 `vrf_map`），
-  `vxlan_access_decap()` 把内层帧搬回主头后查 `l3_fib` 做 SRv6 封装；
-  反方向由 `srv6_decap_vxlan` 解 SRv6 后再封 VXLAN 交回 PM；
+- PM 侧：**L3 和 L2 的接入段都是 VXLAN**（VNI = 网络 ID），underlay 走 VLAN 4000，
+  隧道对端是 **E**（`fd00:0:{站点}:8::1`）而不是 Linux VTEP；
+  L3 是每台 PM 各自接入，L2 只由 PM-1 接入（`ax_*` 设备）；
+- E 用 `vni_map` 把 VNI 映射成 VRF（`map_l3`）或 VSI（`map_l2_vsi`），
+  `vxlan_access_decap()` 把内层帧搬回主头：L3 查 `l3_fib`、L2 查 `l2_tunnel`；
+  反方向 L3 由 `srv6_decap_vxlan`、L2 由 `srv6_l2_decap_vxlan`
+  解 SRv6 后再封 VXLAN 交回 PM；
 - **校验和**：BMv2 的 `ComputeChecksum` 阶段看不到 deparser 之后拼好的字节，
   P4 只能把 UDP checksum 填 0；IPv6 下 0 非法，PM 内核直接丢包。
   因此在 E 的 S1 出口挂一段 tc/eBPF（`bpf/vxlan_csum_shim.c`，clsact egress），
@@ -292,7 +297,7 @@ PM --VXLAN(VNI = 网络 ID)--> V_<站点>(Linux VTEP) --[3500][切片 VLAN]--> S
 - E：接入口同时接受单层 tag（L2VPN 直连 PM）和双层 tag（经 VTEP 的 L3VPN），
   `vlan_map` 用**内层** VLAN 查 VRF/VSI；出方向只对登记过的 L3 切片压外层 3500，
   L2/核心/公网方向保持原样，SRv6（含 L2 over SRv6、TE waypoint）一行未改；
-- L2VPN 仍然走 VLAN + 站点内 VXLAN，不经过 VTEP。
+- L2VPN 也改成 VXLAN 接入（VNI = 网络 ID），不经过 VTEP。
 
 ### 为什么用 QinQ
 
@@ -585,7 +590,7 @@ make parallel-stop            # 清理
 ```bash
 make parallel-stop
 make verify-dry
-make verify-min      # 4 站点，43 条用例
+make verify-min      # 4 站点，44 条用例
 make verify-full     # 41 站点
 ```
 

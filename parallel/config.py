@@ -140,6 +140,18 @@ class ParallelConfig:
         """PM 侧是否用 VXLAN 接入。"""
         return self.access_mode == 'vxlan' and network.vpn == 'l3'
 
+    def site_vni(self, network: Network) -> int:
+        """站点内 PM↔PM 的 VXLAN VNI。
+
+        接入 VNI 用网络 ID；同一 netns 里内核不允许两个设备复用同一个 VNI，
+        所以站点内这段换到高半区（0x800000 | id），两者永不重叠。
+        """
+        return 0x800000 | int(network.id)
+
+    def l2_vxlan(self, network: Network) -> bool:
+        """L2VPN 的接入段是否也走 VXLAN（VNI = 网络 ID）。"""
+        return self.access_mode == 'vxlan' and network.vpn == 'l2'
+
     def e_vxlan(self, network: Network) -> bool:
         """E（P4）是否直接终结 VXLAN；有 Linux VTEP 时为 False。"""
         return self.pm_vxlan(network) and not self.access_vtep

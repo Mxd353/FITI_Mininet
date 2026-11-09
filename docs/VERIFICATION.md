@@ -7,7 +7,7 @@
 ```bash
 make parallel-stop      # 清理旧实例
 make verify-dry         # 免 root，只校验用例与配置
-make verify-min         # 4 站点，43 条用例（故障用例需 --tag faults）
+make verify-min         # 4 站点，44 条用例（故障用例需 --tag faults）
 make verify-full        # 41 站点
 ```
 
@@ -50,7 +50,7 @@ IPv6 接口 down 之后地址和路由会被删除，up 也不会自动恢复，
 
 | 文件 | 内容 | 数量 |
 | --- | --- | --- |
-| `01-reachability.yaml` | L3VPN/L2VPN 互通、多端点、VXLAN、QinQ 双层 tag、E 侧 checksum shim、SRv6 TE、BUM、公网、隧道报文格式 | 20 |
+| `01-reachability.yaml` | L3VPN/L2VPN 互通、多端点、VXLAN（L3/L2 接入）、QinQ 双层 tag、E 侧 checksum shim、SRv6 TE、BUM、公网、隧道报文格式 | 21 |
 | `02-isolation.yaml` | 跨网络必须 100% 丢包 | 4 |
 | `03-vlan.yaml` | S1 放行、S2 拒绝并行 VLAN | 4 |
 | `04-control-plane.yaml` | SID、FIB、OVS trunk、策略路由 | 9 |
@@ -123,9 +123,9 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 
 | 配置 | 规模 | 结果 | 说明 |
 | --- | --- | --- | --- |
-| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，17 netns（无 VTEP） | 42 通过 / 1 跳过 | QinQ 用例需要 access_vtep=true，耗时约 81 秒 |
+| `parallel-min.json` | 4 站点 × 2 主机 × 2 端点，17 netns（无 VTEP） | 43 通过 / 1 跳过 | QinQ 用例需要 access_vtep=true，耗时约 87 秒 |
 | `parallel-min.json --tag faults` | 同上 | 1/1 通过 | netem 注入 100% 丢包后恢复 |
-| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns（无 VTEP） | 42 通过 / 1 跳过 | 用例耗时约 86 秒，峰值内存约 4.5 GB |
+| `parallel.json` | 41 站点 × 2 主机 × 2 端点，166 netns（无 VTEP） | 43 通过 / 1 跳过 | 用例耗时约 94 秒，峰值内存约 4.5 GB |
 
 失败用例会自动 dump 相关节点的 `ip -6 route/rule/addr` 和 P4 表项，
 放在 `runs/<时间戳>/evidence/`。
@@ -155,6 +155,7 @@ L2 表必须显式加默认路由。否则 `from` 表查不到目的时会继续
 | 同站点流量走 VXLAN | `vxlan-intra-site` | `cl_bj_1` 抓 `udp 4789`，VNI = 网络 ID |
 | VTEP↔E 用 QinQ | `qinq-access-double-tag` | `V_bj` 抓 `eth1`，报文为 `vlan 3500` + `vlan 3501` |
 | E 直接终结 VXLAN | `vxlan-e-checksum-shim` | PM 抓 `u4000`，E→PM 的 VXLAN 为 `udp sum ok` |
+| L2VPN 接入用 VXLAN | `l2-access-vxlan` | PM 抓 `u4000`，L2 流量为 `vni 3` + `udp sum ok` |
 | SRv6 TE 经 waypoint | `srv6-te-waypoint` | waypoint C 上抓包，`segleft` 1→0、DA 改写 |
 | 真实业务流量（TCP/HTTP） | `tcp-*`、`http-*` | iperf 传输量非零、curl 200 + 1MB |
 | 端点 MTU 覆盖 SRv6 开销 | `mtu-endpoint-vs-srv6` | 1352 字节通、1400 字节被拒 |
@@ -211,6 +212,22 @@ E→PM 的 VXLAN 报文为 `udp sum ok`。
 解析偏移 4 字节，`inner_ipv6` 永远无效。用 P4 `register` 把
 `inner_ethernet.etherType` 读出（`0x4372` 而非 `0x86dd`）定位后删除该字段。
 
+## L2VPN 的接入段也是 VXLAN
+
+原先 L2VPN 的 PM↔E 段用 802.1Q（`v<vid>` 子接口），VSI 用 VLAN 标识；
+现在改成和 L3 一样的 VXLAN（VNI = 网络 ID），VSI 直接用 24 bit 的 VNI：
+
+- PM-1 建 `ax_<站点>_1_<网络>`（`local u4000`，对端是 E），进 `vlan_bridge`，
+  按 `pvid untagged` 配内部 VID；再加一条 `00:00:00:00:00:00 dst <E>` 的
+  FDB 兜底——L2 的目的 MAC 是远端 VM，不像 L3 是网关 MAC，未知单播/广播必须走 E；
+- E 的 `vni_map` 增加 `map_l2_vsi`：VNI → VSI（`meta.vlan_id` 扩成 24 bit），
+  `l2_tunnel`/`l2_fib`/`l2_bum`/`l2_rep_sid` 全部改用 VSI 作键；
+- 远端来的 SRv6 L2 帧由 `srv6_l2_decap_vxlan` 解封装后再套 VXLAN 交回 PM-1；
+- 站点内 PM↔PM 的 L2 隧道和接入隧道在同一 netns 里，内核不允许两个设备复用
+  同一个 VNI，所以站点内这段用 `0x800000 | 网络 ID`。
+
+验收用例 `l2-access-vxlan` 在 PM 侧抓包断言 L2 流量是 `vni 3` 且 `udp sum ok`。
+
 ## 接入 VXLAN（Linux VTEP）
 
 `configs/parallel.json` 与 `parallel-min.json` 默认 `access_mode=vxlan`、
@@ -220,7 +237,7 @@ E→PM 的 VXLAN 报文为 `udp sum ok`。
 - VTEP 解封装后以 **QinQ 双层 tag**（外层 3500 + 内层切片 VLAN）交给 E，
   E 用内层 VLAN 查 VRF/VSI，再做 SRv6；
 - 好处是把 VXLAN 终结放在内核里（校验和由内核算），E 仍然是纯 P4/SRv6；
-- L2VPN 暂时仍走 VLAN（不经 VTEP），L2 跨站点仍是 SRv6。
+- L2VPN 的接入段也走 VXLAN（VNI = 网络 ID），不经过 VTEP；L2 跨站点仍是 SRv6。
 
 VTEP 侧的关键配置（`parallel/control.py::_configure_vtep`）：
 
