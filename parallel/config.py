@@ -346,20 +346,29 @@ def _load_networks(raw, site_abbrs) -> List[Network]:
     known_sites = set(site_abbrs)
     for entry in raw:
         network_id = int(entry['id'])
-        if not 1 <= network_id <= 400:
-            raise ValueError('并行网络 ID 必须在 1-400: %s' % network_id)
+        # 上限由 L3 地址的 16 bit 网络字段决定；超过后另由接口名长度校验兜底。
+        if not 1 <= network_id <= 65535:
+            raise ValueError('并行网络 ID 必须在 1-65535: %s' % network_id)
         if network_id in seen:
             raise ValueError('并行网络 ID 重复: %s' % network_id)
         seen.add(network_id)
         vpn = str(entry.get('vpn', 'l3')).lower()
         if vpn not in ('l3', 'l2'):
             raise ValueError('网络 %s 的 vpn 必须是 l3/l2' % network_id)
-        expected_vlan = network_id + 3500
-        vlan = int(entry.get('vlan', expected_vlan))
-        if vlan != expected_vlan:
-            raise ValueError(
-                '网络 %s 的 VLAN 必须为 %d（ID + 3500），当前为 %d'
-                % (network_id, expected_vlan, vlan))
+        # 业务 VLAN 只在 VLAN/QinQ 接入时使用。VXLAN 接入的切片不再需要它，
+        # 所以这里允许缺省：ID + 3500 装得下就自动分配，装不下就置 0
+        # （0 = 该切片不使用业务 VLAN）。
+        if 'vlan' in entry:
+            vlan = int(entry['vlan'])
+            if not 1 <= vlan <= 4094:
+                raise ValueError('网络 %s 的 VLAN 必须在 1-4094: %s'
+                                 % (network_id, vlan))
+            if vlan == 4000:
+                raise ValueError('网络 %s 不能用 VLAN 4000：它保留给接入 underlay'
+                                 % network_id)
+        else:
+            candidate = network_id + 3500
+            vlan = candidate if candidate <= 4094 else 0
         site_list = entry.get('sites')
         if site_list is None:
             members = tuple(site_abbrs)
@@ -376,6 +385,14 @@ def _load_networks(raw, site_abbrs) -> List[Network]:
                                  % (network_id, ', '.join(unknown)))
         networks.append(Network(id=network_id, vpn=vpn, vlan=vlan,
                                 sites=members))
+    used = {}
+    for network in networks:
+        if not network.vlan:
+            continue
+        if network.vlan in used:
+            raise ValueError('网络 %s 与 %s 的 VLAN 重复: %d'
+                             % (network.id, used[network.vlan], network.vlan))
+        used[network.vlan] = network.id
     return networks
 
 
@@ -409,6 +426,12 @@ def load_config(path: Optional[str] = None) -> ParallelConfig:
     if access_mode not in ('vlan', 'vxlan'):
         raise ValueError('access_mode 必须是 vlan/vxlan: %s' % access_mode)
     access_vtep = bool(raw.get('access_vtep', False))
+    if access_mode == 'vlan' or access_vtep:
+        missing = [str(net.id) for net in networks if not net.vlan]
+        if missing:
+            raise ValueError(
+                'access_mode=vlan 或 access_vtep=true 需要每个网络有业务 '
+                'VLAN（可用 "vlan" 显式指定）: %s' % ', '.join(missing))
     #: QinQ 外层固定 3500：它是“定制并行网络 VLAN”的上界，S2 上行现在就拒绝它。
     #: 将来要扩成多外层（3500/3499/...）时，必须同时扩大 ovs.NON_PARALLEL_VLANS
     #: 的拒绝区间，并把 E 的 vlan_map 键从“内层 VID”改成“(外层, 内层)”。

@@ -139,8 +139,11 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
         _add_port(commands[e], names, e_ports[s1], 'set_trunk', 'set_trunk')
         for network in cfg.networks_for_site(site):
             if network.vpn == 'l3':
-                _add(commands[e], names, 'vlan_map', 'map_l3',
-                     [network.vlan], [network.id])
+                # 只有 E 仍按 VLAN 识别切片时才需要 vlan_map
+                # （VXLAN 接入走 vni_map；VLAN/QinQ 接入走 vlan_map）。
+                if not cfg.e_vxlan(network):
+                    _add(commands[e], names, 'vlan_map', 'map_l3',
+                         [network.vlan], [network.id])
                 if cfg.access_vtep:
                     # 经 Linux VTEP 的切片：E 出方向要压外层 QinQ tag
                     _add(commands[e], names, 'qinq_map', 'qinq_push',
@@ -148,7 +151,7 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
                 if cfg.e_vxlan(network):
                     _add(commands[e], names, 'vni_map', 'map_l3',
                          [network.id], [network.id])
-            else:
+            elif not cfg.l2_vxlan(network):
                 _add(commands[e], names, 'vlan_map', 'map_l2',
                      [network.vlan])
 
@@ -159,6 +162,10 @@ def _install_switch_tables(net, cfg, names, switch_ports, macs, evpn_routes):
         # VRF and prefix routes come from IP Prefix routes; local SIDs come
         # from the same route objects so static and future BGP modes agree.
         l3_routes = evpn_routes.l3_routes()
+        # 只给本站点参与的切片下发 VRF/前缀路由：EVPN 模型里一条路由可能只在
+        # 部分站点存在（例如 4096 切片时每个站点只挂一部分），非成员站点跳过。
+        l3_routes = [route for route in l3_routes
+                     if site.abbr in cfg.network(route.vni).sites]
         for route in sorted(l3_routes, key=lambda item: (item.vni, item.prefix)):
             _add(commands[e], names, 'vrf_map', 'map_vrf',
                  [route.prefix], [route.vni])

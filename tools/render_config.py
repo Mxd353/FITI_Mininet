@@ -41,6 +41,11 @@ def render_huawei(cfg):
         lines.append('! ================================================')
         for network in sorted(cfg.networks_for_site(site),
                               key=lambda item: item.id):
+            if not network.vlan:
+                lines.append('! 网络 %d 走 VXLAN 接入，无业务 VLAN，'
+                             '真实设备侧无需 dot1q 子接口' % network.id)
+                lines.append('')
+                continue
             if network.vpn == 'l3':
                 lines.extend(_huawei_l3(cfg, site, network))
             else:

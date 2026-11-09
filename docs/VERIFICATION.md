@@ -228,6 +228,23 @@ E→PM 的 VXLAN 报文为 `udp sum ok`。
 
 验收用例 `l2-access-vxlan` 在 PM 侧抓包断言 L2 流量是 `vni 3` 且 `udp sum ok`。
 
+## 配置层：业务 VLAN 变为可选
+
+VXLAN 接入下切片标识是 VNI，业务 VLAN 只对 `access_mode=vlan` / QinQ 有用，
+因此 `load_config` 放宽为：
+
+- `vlan` 缺省时按 `ID + 3500` 自动分配，`ID > 594` 时置 0（不使用业务 VLAN）；
+- 网络 ID 上限从 400 放宽到 65535（再由接口名长度兜底）；
+- 显式 `vlan` 校验 1-4094、不重复、且不能用 4000（接入 underlay 保留）；
+- `access_mode=vlan` 或 `access_vtep=true` 时仍要求每个网络都有 VLAN。
+
+实测（临时配置，`network 600 / l3 / sites=[bj, sh]`，`vlan = 0`）：
+`240a:a806:600:1::20` 与 `240a:a806:600:2::10` 均可达，
+E 的 `vni_map` 有 3 条、`vlan_map` 为空。
+
+顺带修掉一个旧限制：非成员站点不再为不属于自己的网络下发
+`vrf_map`/`l3_fib` 路由（原先会直接报“缺少本地 EVPN 路由”）。
+
 ## 接入 VXLAN（Linux VTEP）
 
 `configs/parallel.json` 与 `parallel-min.json` 默认 `access_mode=vxlan`、
