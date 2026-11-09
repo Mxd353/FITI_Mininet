@@ -1,8 +1,10 @@
 P4C      ?= p4c-bm2-ss
 PARALLEL_P4_JSON  = build/parallel_vpn.json
 PARALLEL_P4INFO   = build/parallel_vpn.p4info.txt
+CSUM_SHIM         = build/vxlan_csum_shim.o
+CLANG    ?= clang
 
-.PHONY: all clean parallel-p4 parallel-dump parallel-evpn-dump \
+.PHONY: all clean parallel-p4 parallel-bpf parallel-dump parallel-evpn-dump \
         parallel-dump-min parallel-evpn-dump-min test test-config test-evpn \
         test-ovs test-control test-cleanup test-verify test-path-map \
         verify-dry verify-min verify-full verify-isolation verify-faults \
@@ -10,7 +12,7 @@ PARALLEL_P4INFO   = build/parallel_vpn.p4info.txt
         parallel-run parallel-run-no-cli parallel-run-min \
         parallel-run-no-cli-min parallel-stop fix-tty
 
-all: parallel-p4
+all: parallel-p4 parallel-bpf
 
 clean:
 	rm -rf build pcap
@@ -22,6 +24,13 @@ parallel-p4:
 	@mkdir -p build
 	$(P4C) --arch v1model --p4runtime-files $(PARALLEL_P4INFO) \
 		-o $(PARALLEL_P4_JSON) p4src/parallel_vpn.p4
+
+# 模拟网卡 checksum offload：E 直接终结 VXLAN 时给 IPv6/UDP 补校验和
+parallel-bpf:
+	@mkdir -p build
+	$(CLANG) -O2 -g -target bpf -D__TARGET_ARCH_x86 \
+		-I/usr/include/x86_64-linux-gnu \
+		-c bpf/vxlan_csum_shim.c -o $(CSUM_SHIM)
 
 parallel-dump:
 	python3 parallel_net.py --dump

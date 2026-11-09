@@ -402,6 +402,12 @@ def _run(args, cfg, cases, reporter=None):
                 result = Result(
                     name=case.name, status='skip',
                     reason='需要每站点 %d 台主机' % case.requires_hosts)
+            elif (case.requires_access_vtep is not None
+                  and case.requires_access_vtep != cfg.access_vtep):
+                result = Result(
+                    name=case.name, status='skip',
+                    reason='需要 access_vtep=%s'
+                    % ('true' if case.requires_access_vtep else 'false'))
             else:
                 result = runner.run_case(case)
                 if result.status == 'fail' and args.evidence:

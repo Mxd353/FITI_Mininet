@@ -37,12 +37,22 @@ class Case:
     tags: Tuple[str, ...] = ()
     requires_sites: Tuple[str, ...] = ()
     requires_hosts: int = 1
+    #: 要求接入模式：True = 有 Linux VTEP；False = E 直接终结 VXLAN；None = 不限。
+    requires_access_vtep: Optional[bool] = None
     teardown: List[dict] = field(default_factory=list)
     description: str = ''
     source: str = ''
 
     def wants(self, tag: str) -> bool:
         return tag in self.tags
+
+
+def _as_optional_bool(value) -> Optional[bool]:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise SpecError('requires_access_vtep 必须是 true/false')
+    return value
 
 
 def _as_tuple(value) -> Tuple[str, ...]:
@@ -110,6 +120,8 @@ def load_cases(path: str, tags: Optional[Sequence[str]] = None,
                 tags=_as_tuple(entry.get('tags')),
                 requires_sites=_as_tuple(entry.get('requires_sites')),
                 requires_hosts=int(entry.get('requires_hosts', 1)),
+                requires_access_vtep=_as_optional_bool(
+                    entry.get('requires_access_vtep')),
                 teardown=teardown,
                 description=str(entry.get('description', '')),
                 source=filename,

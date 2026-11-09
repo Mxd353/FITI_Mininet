@@ -155,6 +155,7 @@ cases:
   - name: qinq-access-double-tag
     tags: [core, l3, packet, qinq]
     requires_sites: [sh]
+    requires_access_vtep: true
     description: 经 Linux VTEP 的 L3 切片在 VTEP↔E 段是 QinQ 双层 tag（外层 3500 + 内层切片 VLAN）
     steps:
       - type: exec
@@ -172,6 +173,28 @@ cases:
         node: V_bj
         command: sh -c 'tcpdump -r /tmp/qinq.pcap -nn -e -vv 2>/dev/null | grep -q "vlan 3500.*vlan 3501" && echo QINQ_OK'
         expect_contains: QINQ_OK
+
+  - name: vxlan-e-checksum-shim
+    tags: [core, l3, packet, shim]
+    requires_sites: [sh]
+    requires_access_vtep: false
+    description: E（BMv2）直接终结 VXLAN，tc/eBPF shim 把 IPv6/UDP 校验和补齐（udp sum ok）
+    steps:
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'rm -f /tmp/shim.pcap; setsid timeout 10 tcpdump -i u4000 -U -s0 -w /tmp/shim.pcap "udp port 4789" >/dev/null 2>&1 & sleep 1; echo CAPTURE_STARTED'
+        expect_contains: CAPTURE_STARTED
+      - type: ping
+        node: cl_bj_1
+        iface: 240a:a806:1:1::10
+        target: 240a:a806:1:2::10
+        expect: pass
+      - type: sleep
+        seconds: 3
+      - type: exec
+        node: cl_bj_1
+        command: sh -c 'tcpdump -r /tmp/shim.pcap -nn -vv 2>/dev/null | grep -qE "fd00:0:1:8::1[^ ]*\.4789 > .*udp sum ok" && echo SHIM_OK'
+        expect_contains: SHIM_OK
 
   - name: srv6-te-waypoint
     tags: [core, l3, te]

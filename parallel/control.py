@@ -361,6 +361,11 @@ def _install_one_switch(net, name, cmds, groups):
 
 IP_ERRORS = ('RTNETLINK', 'Error:', 'Cannot find device')
 
+#: E 直接终结 VXLAN 时用的 tc/eBPF checksum shim（make parallel-bpf 生成）。
+CSUM_SHIM = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'build', 'vxlan_csum_shim.o')
+
 
 def _run_ip(host, command, context):
     output = host.cmd(command)
@@ -548,6 +553,23 @@ def _configure_cloud_host(net, cfg, site, host_id):
                   cfg.underlay_address(site, host_id) + '/64')
         cloud.cmd('ethtool -K %s tx off 2>/dev/null || true'
                   % underlay.name)
+
+
+def _configure_csum_shim(net, cfg, site):
+    """给 E 的出口挂 tc/eBPF，重算 VXLAN 的 IPv6/UDP 校验和。
+
+    BMv2 的 ComputeChecksum 看不到 deparser 之后拼好的字节，P4 只能把
+    UDP checksum 填 0；IPv6 下 0 非法，对端内核会直接丢包。这个 shim 相当于
+    网卡的 checksum offload：报文成型后由内核侧重算一次。
+    """
+    if not os.path.isfile(CSUM_SHIM):
+        raise RuntimeError('缺少 %s，请先执行 make parallel-bpf' % CSUM_SHIM)
+    e = net.get(e_name(site))
+    intf = _host_intf(e, s1_name(site))
+    e.cmd('tc qdisc del dev %s clsact 2>/dev/null || true' % intf.name)
+    _run_ip(e, 'tc qdisc add dev %s clsact' % intf.name, '创建 clsact')
+    _run_ip(e, 'tc filter add dev %s egress bpf da obj %s sec tc'
+            % (intf.name, CSUM_SHIM), '加载 VXLAN checksum shim')
 
 
 def _configure_vtep(net, cfg, site):
@@ -891,6 +913,10 @@ def install_parallel_rules(net, cfg: ParallelConfig, json_path=None):
         print('*** 配置 Linux VTEP（接入 VXLAN → VLAN）')
         for site in cfg.sites:
             _configure_vtep(net, cfg, site)
+    elif cfg.access_mode == 'vxlan':
+        print('*** 配置 E 侧 VXLAN checksum shim（tc/eBPF）')
+        for site in cfg.sites:
+            _configure_csum_shim(net, cfg, site)
     switch_ports = _port_maps(net, cfg)
     macs = _site_macs(net, cfg)
 

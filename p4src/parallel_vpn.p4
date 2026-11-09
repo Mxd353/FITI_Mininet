@@ -81,7 +81,6 @@ header vxlan_t {
     bit<8>  flags;
     bit<24> reserved;
     bit<24> vni;
-    bit<32> pseudo_len;
     bit<8>  reserved2;
 }
 
@@ -111,7 +110,6 @@ struct metadata_t {
     bit<1>  transit;
     bit<1>  bad_srh;
     bit<24> vni;
-    bit<32> pseudo_len;
 }
 
 parser ParserImpl(packet_in packet,
@@ -229,6 +227,7 @@ control VerifyChecksumImpl(inout headers_t hdr,
 control IngressImpl(inout headers_t hdr,
                     inout metadata_t meta,
                     inout standard_metadata_t standard_metadata) {
+
     action drop() {
         mark_to_drop(standard_metadata);
     }
@@ -972,7 +971,6 @@ control IngressImpl(inout headers_t hdr,
         meta.transit = 0;
         meta.bad_srh = 0;
         meta.vni = 0;
-        meta.pseudo_len = 0;
         meta.ingress_port = standard_metadata.ingress_port;
 
         port_cfg.apply();
