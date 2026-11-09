@@ -26,10 +26,12 @@ parallel-p4:
 		-o $(PARALLEL_P4_JSON) p4src/parallel_vpn.p4
 
 # 模拟网卡 checksum offload：E 直接终结 VXLAN 时给 IPv6/UDP 补校验和
+BPF_ARCH_INC := $(if $(wildcard /usr/include/$(shell uname -m)-linux-gnu/asm/types.h),-I/usr/include/$(shell uname -m)-linux-gnu,)
+
 parallel-bpf:
 	@mkdir -p build
 	$(CLANG) -O2 -g -target bpf -D__TARGET_ARCH_x86 \
-		-I/usr/include/x86_64-linux-gnu \
+		$(BPF_ARCH_INC) \
 		-c bpf/vxlan_csum_shim.c -o $(CSUM_SHIM)
 
 parallel-dump:
@@ -84,11 +86,11 @@ verify-dry:
 	python3 verify/runner.py --config configs/parallel-min.json --dry-run
 
 # 功能验收：4 站点最小拓扑
-verify-min: parallel-p4
+verify-min: parallel-p4 parallel-bpf
 	sudo python3 verify/runner.py --config configs/parallel-min.json
 
 # 功能验收：41 站点全量
-verify-full: parallel-p4
+verify-full: parallel-p4 parallel-bpf
 	sudo python3 verify/runner.py --config configs/parallel.json
 
 # 只跑隔离或故障用例
@@ -105,16 +107,16 @@ render-config:
 	python3 tools/render_config.py --config configs/parallel-min.json \
 		--target huawei --out configs/expected/huawei-min.txt
 
-parallel-run: parallel-p4
+parallel-run: parallel-p4 parallel-bpf
 	sudo python3 parallel_net.py
 
-parallel-run-no-cli: parallel-p4
+parallel-run-no-cli: parallel-p4 parallel-bpf
 	sudo python3 parallel_net.py --no-cli
 
-parallel-run-min: parallel-p4
+parallel-run-min: parallel-p4 parallel-bpf
 	sudo python3 parallel_net.py --config configs/parallel-min.json
 
-parallel-run-no-cli-min: parallel-p4
+parallel-run-no-cli-min: parallel-p4 parallel-bpf
 	sudo python3 parallel_net.py --config configs/parallel-min.json --no-cli
 
 # 先恢复终端，避免整个清理过程的输出“阶梯式”错位；

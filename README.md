@@ -9,7 +9,7 @@
 > “PM 直接用 VLAN 接入”，两者不合并。
 >
 > 运行方式与主线相同：`make parallel-run-min` / `make verify-min`
-> （首次需 `make parallel-bpf`，`all` 目标已包含）；
+> （`parallel-run*`、`verify-*` 和 `all` 都会自动编译 `parallel-bpf`）；
 > 切换版本：`feature/parallel-network`（PM 直接用 VLAN）、
 > `feature/qinq-access`（Linux VTEP + QinQ，备选）或
 > `feature/vxlan-e-shim`（当前，VXLAN 方案实现）。
@@ -33,8 +33,13 @@
 ## 分支
 
 ```text
-feature/parallel-network    41 站点、41 台 BMv2 + 82 台 OVS 当前实现
+feature/vxlan-e-shim        VXLAN 方案实现：PM 用 VXLAN 接入，E 直接终结
+                            + tc/eBPF checksum shim（本分支）
+feature/qinq-access         备选：Linux VTEP 终结 VXLAN，VTEP↔E 用 QinQ
+feature/parallel-network    基线：PM 直接用 VLAN 接入
 ```
+
+三条分支拓扑相同（41 站点、41 台 BMv2 + 82 台 OVS），只差接入段。
 
 ## 快速开始
 
@@ -50,7 +55,17 @@ sudo modprobe 8021q
 - Mininet 2.3+；
 - Open vSwitch（`ovs-vsctl`、`ovs-vswitchd`）；
 - p4c（`p4c-bm2-ss`）；
-- bmv2（`simple_switch`、`simple_switch_CLI`）。
+- bmv2（`simple_switch`、`simple_switch_CLI`）；
+- 内核支持 tc `clsact` + BPF（`CONFIG_NET_CLS_BPF=y`，主流发行版默认满足）；
+- clang（带 BPF target）和 libbpf 头文件，用于编译 checksum shim：
+
+```bash
+clang --version          # 需要支持 -target bpf
+ls /usr/include/bpf/bpf_helpers.h
+```
+
+缺少 clang 时 `make parallel-run*` / `make verify-*` 会停在 `parallel-bpf`
+编译步骤；此时只能用 `access_vtep=true` 的配置（不需要 shim）。
 
 ### 4 站点最小验证
 
@@ -97,7 +112,8 @@ make parallel-run
 41 台 BMv2（每站点 E）
 82 台 OVS（每站点 S1/S2）
 166 个 Linux netns（每站点 2 台云主机）
-82 个宿主机 bridge、328 个 tap veth、328 个 VXLAN 设备
+246 个宿主机 bridge、656 对 tap veth、328 个 VXLAN 设备
+（每台 PM：3 个 bridge、8 对 tap veth、4 个 VXLAN，实测见 VERIFICATION.md）
 ```
 
 Thrift 端口段被占用时会自动向后寻找空闲端口段，也可以显式指定起始端口：
@@ -218,9 +234,9 @@ PM --VXLAN(VNI = 网络 ID)--> S1 --> E(BMv2)：P4 解封装 → VRF → SRv6
 
 - PM 侧和 `access_vtep=true` 一样：每个 L3 网络一个 VXLAN 设备，underlay 走 VLAN 4000；
   区别是隧道对端是 **E**（`fd00:0:{站点}:8::1`）而不是 Linux VTEP；
-- E 用 `vni_map` 把 VNI 映射到 VRF，`vxlan_access_decap()` 把内层帧搬回主头，
-  再走 `vrf_map`/`l3_fib` 做 SRv6 封装；反方向由 `srv6_decap_vxlan` 解 SRv6
-  后再封 VXLAN 交回 PM；
+- E 用 `vni_map` 直接把 VNI 映射到 VRF（不再查 `vrf_map`），
+  `vxlan_access_decap()` 把内层帧搬回主头后查 `l3_fib` 做 SRv6 封装；
+  反方向由 `srv6_decap_vxlan` 解 SRv6 后再封 VXLAN 交回 PM；
 - **校验和**：BMv2 的 `ComputeChecksum` 阶段看不到 deparser 之后拼好的字节，
   P4 只能把 UDP checksum 填 0；IPv6 下 0 非法，PM 内核直接丢包。
   因此在 E 的 S1 出口挂一段 tc/eBPF（`bpf/vxlan_csum_shim.c`，clsact egress），
@@ -232,16 +248,23 @@ make parallel-run-min    # 启动时自动给每台 E 挂上
 ```
 
 shim 只处理 `Eth [+VLAN/VLAN] + IPv6 + UDP(dport 4789)`，其余流量原样放行；
-它同时兼容单层 tag 和 QinQ，所以两条接入路线可以共用。
+它同时兼容单层 tag 和 QinQ，所以两条接入路线可以共用。确认是否挂上：
+
+```bash
+tc filter show dev E_bj-eth2 egress     # 应看到 vxlan_csum_shim.o:[tc] direct-action
+```
+
+验证时也可以在 PM 侧抓包，E→PM 的 VXLAN 应为 `[udp sum ok]`。
 
 踩过的坑：`vxlan_t` 里曾多一个 `bit<32> pseudo_len`（早期算校验和时留下的），
 使 VXLAN 头变成 12 字节，解析整体偏移 4 字节、内层 IPv6 根本出不来。
 用 P4 `register` 探针把 `inner_ethernet.etherType` 读出来（得到 `0x4372` 而不是
 `0x86dd`）才定位到。删掉该字段后 VXLAN 头恢复 8 字节。
 
-## 接入 VXLAN 与 Linux VTEP（access_mode=vxlan）
+## 备选：Linux VTEP 终结 VXLAN（access_vtep=true）
 
-`access_mode` 为 `vxlan` 时，L3VPN 的接入段不再用业务 VLAN，而是：
+`access_mode=vxlan` 且 `access_vtep=true` 时，L3VPN 的接入段交给本站点的
+Linux VTEP 终结，再以 QinQ 交给 E：
 
 ```text
 PM --VXLAN(VNI = 网络 ID)--> V_<站点>(Linux VTEP) --[3500][切片 VLAN]--> S1 --> E(BMv2) --SRv6-->
@@ -267,16 +290,21 @@ PM --VXLAN(VNI = 网络 ID)--> V_<站点>(Linux VTEP) --[3500][切片 VLAN]--> S
 | --- | --- | --- |
 | PM ↔ VTEP | VXLAN VNI | 24 bit |
 | VTEP ↔ E | QinQ 外层 3500 + 内层切片 VLAN | 每个外层 4094 个切片 |
-| E 内部 | 内层 VLAN → `vlan_map` / `vrf_map` | 表大小 4096 / 16384 |
+| E 内部 | 内层 VLAN → VRF/VSI（`vlan_map`）；前缀 → VRF（`vrf_map`） | 4096 / 16384 条 |
 
 当前外层固定为 3500（`qinq_outer`），单个外层够 4094 个切片；再往上扩就需要
 「多外层」：换一个外层值再多 4094 个。但要注意三个联动点——`ovs.NON_PARALLEL_VLANS`
 的拒绝区间要跟着扩、E 的 `vlan_map` 键要从「内层 VID」改成「(外层, 内层)」、
 VTEP 也要多建一个外层子接口。因此当前实现只启用单外层 3500。
 
-为什么要有这个 VTEP：BMv2 是软件数据面，**不会计算 IPv6 UDP 校验和**
-（IPv6 下校验和为 0 会被内核丢包），把 VXLAN 终结放到内核里就绕过了这个限制。
-如果 E 换成真机或 Linux，这一层可以直接去掉。
+为什么会有两条路线：BMv2 是软件数据面，**不会计算 IPv6 UDP 校验和**
+（IPv6 下校验和为 0 会被内核丢包）。VTEP 路线把终结放到内核里绕过它；
+本分支的默认路线（上一节）则在 E 的出口挂 tc/eBPF 重算校验和。
+两者的数据面等价，只是“谁来算校验和”不同：
+
+- **E 直接终结 + shim**（默认，`access_vtep=false`）：少一跳、少一套 VTEP 进程；
+- **VTEP + QinQ**（备选，`access_vtep=true`）：不需要在 E 侧挂 tc/eBPF，
+  适合不允许改动 E 宿主环境的场景。
 
 配置字段：
 
@@ -285,8 +313,8 @@ VTEP 也要多建一个外层子接口。因此当前实现只启用单外层 35
 "access_vtep": false
 ```
 
-- `access_vtep=true`：Linux VTEP 终结 VXLAN，VTEP↔E 用 QinQ（见上一节）；
-- `access_vtep=false`：E 自己终结 VXLAN，需要 `make parallel-bpf` 的 checksum shim。
+- `access_vtep=false`（默认）：E 自己终结 VXLAN，需要 `make parallel-bpf` 的 checksum shim；
+- `access_vtep=true`：Linux VTEP 终结 VXLAN，VTEP↔E 用 QinQ（见“备选”一节）。
 
 ## 接入交换机（OVS）
 
@@ -516,6 +544,7 @@ cl_bj_1 ping6 -c 3 -I 240a:a806:1:1::10 240a:a806:2:2::10
 
 ```bash
 make parallel-p4              # 编译 P4
+make parallel-bpf             # 编译 VXLAN checksum shim（tc/eBPF）
 make parallel-dump            # 41 站点拓扑
 make parallel-dump-min        # 4 站点拓扑
 make parallel-evpn-dump       # 41 站点路由模型
@@ -609,6 +638,9 @@ parallel/                   并行网络实现
 ├── runtime.py              Mininet 构建
 └── p4.py                   P4 编译和名称解析
 
+bpf/
+└── vxlan_csum_shim.c       模拟网卡 checksum offload：E 终结 VXLAN 时补 UDP 校验和
+
 configs/
 ├── fiti.json               FITI 实际拓扑数据（41 节点/43 链路）
 ├── parallel.json           41 站点配置
@@ -644,13 +676,13 @@ parallel_evpn_ctl.py        agent 客户端
 - SID、C 路由和公网路由仍是静态配置；
 - 没有真实 BGP/EVPN 会话、Route Reflector 或 EVPN NLRI 编解码；
 - L2 BUM multicast group 是静态生成的；
-- VXLAN 回退模式只支持已知单播；
+- VXLAN 回退模式（L2 over VXLAN）只支持已知单播，且 E↔E 这段走核心口、没有 checksum shim 覆盖，目前未启用；
 - SRv6 TE 目前是静态配置（`te_paths`），只支持 L3VPN 和单个 waypoint；
 - 动态 agent 只支持 L3 IP Prefix 和 L2 MAC/IP 已知单播；
 - 接入交换机是 OVS，L2 转发靠 MAC 学习，不是 EVPN 下发的静态 FIB；
 - 41 台 BMv2 仍然占用较多资源，全量启动较慢；
-- 每站点 2 主机 × 2 端点会产生 166 个 netns、82 个 bridge、328 个 tap veth、
-  328 个 VXLAN 和 656 张路由表；41 站点全量的资源占用见 VERIFICATION.md；
+- 每站点 2 主机 × 2 端点会产生 166 个 netns、246 个 bridge、656 对 tap veth、
+  328 个 VXLAN 和 656 张端点路由表；41 站点全量的资源占用见 VERIFICATION.md；
 - 同站点跨 PM 的流量走 VXLAN（VNI = 网络 ID），两个 VTEP 都在本机；
 - L2 远端主机之间依赖 ND 解析，不再逐主机下发静态邻居；
 - SRv6 封装有额外开销（L3 64B、L2 78B），端点 MTU 默认 1400（`endpoint_mtu`），
