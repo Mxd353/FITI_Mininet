@@ -211,6 +211,11 @@ E 侧（`p4src/parallel_vpn.p4`）：
 2. VTEP↔E 的 QinQ 不能“把物理口放进桥、再在桥上打两层 tag”——Linux 桥每个
    端口只打一层，必须让物理口留在桥外，用 VLAN 子接口当桥端口。
 
+另外修掉一个潜伏 bug：`vxlan_t` 里残留的 `bit<32> pseudo_len` 让 VXLAN 头
+变成 12 字节（实际 8 字节），解析会整体偏移 4 字节、`inner_ipv6` 永远无效。
+本配置下 E 不解析 VXLAN（VTEP 终结），所以验收不受影响；但 P4 的 VXLAN
+回退路径（`vxlan_map` / `srv6_decap_vxlan`）会直接踩到，已删除该字段。
+
 ## SRv6 TE（静态多段）
 
 `configs/*.json` 的 `te_paths` 给某条 L3VPN 路径指定一个 waypoint 站点：
