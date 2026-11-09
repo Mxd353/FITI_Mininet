@@ -385,6 +385,22 @@ sudo ovs-appctl fdb/show S1_bj
 - 例：`{"id": 600, "vpn": "l3", "sites": ["bj", "sh"]}` 在 VXLAN 接入下
   会得到 `vlan = 0`，实测同站点和跨站点都能通。
 
+### 容量：4096 切片
+
+`make verify-scale` 会把配置放大到 N 个 L3 切片（默认 4096），只保留
+4 个站点（bj/tjn/jnn/sh）、每站点 1 台 PM、1 个端点，然后校验表项并抽样连通：
+
+| 项 | 实测（4096 切片） |
+| --- | --- |
+| `vni_map` / `local_sid` | 各 4096 条（表容量 16384） |
+| `l3_fib` | 20481 条（每切片 5 条：/64、/128、两个 underlay 下一跳、公网） |
+| 抽样连通（切片 1 / 2048 / 4096） | 全部 PASS |
+| 建拓扑耗时 | 约 35 分钟（每台 PM 约 1.6 万个 netdev） |
+
+这说明**配置和 P4 表项层面已经支持 4096 切片**；剩下的瓶颈是仿真本身：
+4096 切片 × 41 站点不现实（每台 PM 每切片要 1 个 bridge + 1 个 VXLAN + 端点 veth）。
+另外 `transit_sid`/`sid_fib` 各 16384 条，4096 切片 × 41 站点的静态 TE 仍会超出。
+
 其他可选字段：
 
 ```json
@@ -587,6 +603,7 @@ make test                     # 全部单元测试
 make verify-dry               # 免 root，校验用例和配置
 make verify-min               # 4 站点功能验收
 make verify-full              # 41 站点功能验收
+make verify-scale             # 容量验收：默认 4096 切片（NETWORKS=512 可调）
 make render-config            # 重新生成真实设备配置基线
 
 make parallel-run             # 41 站点，41 台 BMv2 + 82 台 OVS
@@ -604,6 +621,7 @@ make parallel-stop
 make verify-dry
 make verify-min      # 4 站点，44 条用例
 make verify-full     # 41 站点
+make verify-scale    # 容量验收：4096 切片（表项 + 抽样连通）
 ```
 
 覆盖：

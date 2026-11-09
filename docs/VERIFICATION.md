@@ -228,6 +228,24 @@ E→PM 的 VXLAN 报文为 `udp sum ok`。
 
 验收用例 `l2-access-vxlan` 在 PM 侧抓包断言 L2 流量是 `vni 3` 且 `udp sum ok`。
 
+## 容量验收（`make verify-scale`）
+
+`verify/scale.py` 用 `configs/parallel-min.json` 当模板生成 N 个 L3 切片的临时配置，
+只保留 4 个站点（bj/tjn/jnn/sh，其中 bj/sh 是切片成员，tjn/jnn 只做中转）、
+每站点 1 台 PM、1 个端点，然后校验 E 的表项并抽样 ping。
+
+| N | 建拓扑 | `vni_map` | `local_sid` | `l3_fib` | 抽样（1 / 中间 / N） |
+| --- | --- | --- | --- | --- | --- |
+| 64 | 11s | 64 | 64 | 321 | 全 PASS |
+| 512 | 85s | 512 | 512 | 2561 | 全 PASS |
+| 4096 | 2125s | 4096 | 4096 | 20481 | 全 PASS |
+
+配套的表容量：`vni_map` / `local_sid` / `transit_sid` / `sid_fib` 均为 16384，
+`l2_bum` 8192，`l3_fib` / `l2_tunnel` / `l2_fib` 65536。
+
+代价是设备数量：4096 切片时每台 PM 约 1.6 万个 netdev（每切片 1 个 bridge +
+1 个 VXLAN + 端点 veth），所以 4096 × 41 站点不适合在单机 Mininet 里跑。
+
 ## 配置层：业务 VLAN 变为可选
 
 VXLAN 接入下切片标识是 VNI，业务 VLAN 只对 `access_mode=vlan` / QinQ 有用，

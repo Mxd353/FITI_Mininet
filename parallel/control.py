@@ -845,13 +845,12 @@ def _configure_routers(net, cfg, macs):
                       % (cfg.business_network(network, target),
                          next_hop, intf.name))
 
-        # Underlay /48 routes carry remote SRv6 SIDs and L2 VXLAN endpoints.
-        remote_targets = {}
-        for network in cfg.networks_for_site(site):
-            for target in cfg.network_sites(network):
-                if target.id != site.id:
-                    remote_targets[target.id] = target
-        for target in sorted(remote_targets.values(), key=lambda item: item.id):
+        # Underlay /48 routes carry remote SRv6 SIDs. 按**站点**装，而不是按切片
+        # 成员：一个站点可能只承载部分切片，但仍要转发经过它的 SRv6 流量
+        # （例如 bj→sh 经 tjn、jnn 中转）。
+        for target in sorted(cfg.sites, key=lambda item: item.id):
+            if target.id == site.id:
+                continue
             next_hop, intf = _core_next(net, cfg, site, target)
             c.cmd('ip -6 route replace %s via %s dev %s'
                   % (cfg.underlay_network(target), next_hop, intf.name))

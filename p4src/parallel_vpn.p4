@@ -352,7 +352,8 @@ control IngressImpl(inout headers_t hdr,
             map_l2_vsi;
             drop;
         }
-        size = 4096;
+        // 4096 个 L3 + 4096 个 L2 切片，留一倍余量
+        size = 16384;
         default_action = drop;
     }
 
@@ -505,7 +506,8 @@ control IngressImpl(inout headers_t hdr,
             srv6_end;
             drop;
         }
-        size = 1024;
+        // 只有配置了 waypoint 的切片才占表项
+        size = 16384;
         default_action = drop;
     }
 
@@ -517,7 +519,7 @@ control IngressImpl(inout headers_t hdr,
             forward_sid;
             drop;
         }
-        size = 1024;
+        size = 16384;
         default_action = drop;
     }
 
@@ -866,7 +868,8 @@ control IngressImpl(inout headers_t hdr,
             srv6_l2_decap_vxlan;
             drop;
         }
-        size = 4096;
+        // 每个切片一条本地 SID（L3 与 L2 共用）
+        size = 16384;
         default_action = drop;
     }
 
@@ -1012,7 +1015,7 @@ control IngressImpl(inout headers_t hdr,
             set_l2_bum;
             l2_tunnel_nop;
         }
-        size = 1024;
+        size = 8192;
         default_action = l2_tunnel_nop;
     }
 

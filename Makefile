@@ -7,7 +7,8 @@ CLANG    ?= clang
 .PHONY: all clean parallel-p4 parallel-bpf parallel-dump parallel-evpn-dump \
         parallel-dump-min parallel-evpn-dump-min test test-config test-evpn \
         test-ovs test-control test-cleanup test-verify test-path-map \
-        verify-dry verify-min verify-full verify-isolation verify-faults \
+        verify-dry verify-min verify-full verify-scale verify-isolation \
+        verify-faults \
         render-config path-map path-map-golden \
         parallel-run parallel-run-no-cli parallel-run-min \
         parallel-run-no-cli-min parallel-stop fix-tty
@@ -88,6 +89,12 @@ verify-dry:
 # 功能验收：4 站点最小拓扑
 verify-min: parallel-p4 parallel-bpf
 	sudo python3 verify/runner.py --config configs/parallel-min.json
+
+# 容量验收：把配置放大到 N 个切片（默认 4096），校验表项 + 抽样连通
+NETWORKS ?= 4096
+
+verify-scale: parallel-p4 parallel-bpf
+	sudo python3 verify/scale.py --networks $(NETWORKS)
 
 # 功能验收：41 站点全量
 verify-full: parallel-p4 parallel-bpf
