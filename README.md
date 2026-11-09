@@ -8,8 +8,9 @@
 > 不变）。主线 `feature/parallel-network` 保持“PM 直接用 VLAN 接入”，两者不合并。
 >
 > 运行方式与主线相同：`make parallel-run-min` / `make verify-min`；
-> 切换版本：`git checkout feature/parallel-network`、`feature/vxlan-access`
-> （单层 VLAN）或 `feature/qinq-access`（当前，QinQ）。
+> 切换版本：`git checkout feature/parallel-network`（PM 直接用 VLAN）、
+> `feature/vxlan-e-shim`（VXLAN 方案实现）或 `feature/qinq-access`
+> （当前，Linux VTEP + QinQ）。
 
 本分支只包含 **中关村主干网并行网络仿真**。
 
