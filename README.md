@@ -201,11 +201,24 @@ VXLAN（vx_*）      : VNI = 网络 ID，local/remote = fd00:0:{站点}:9::1/::2
 | --- | --- | --- |
 | 同站点 VM → VM（跨 PM） | tap → bridge → VXLAN → 对端 bridge → tap | VXLAN（VNI = 网络 ID） |
 | 同 PM 的两个 VM | tap → bridge → tap | 普通以太网，不出桥 |
-| VM → 其它站点 | tap → bridge → VLAN → S1 → E → SRv6 | 段内 VLAN，跨站点 SRv6 |
-| 其它站点 → VM | E → S1 → VLAN → bridge → tap | 同上 |
+| L3 VM → 其它站点 | tap → bridge → VXLAN（VNI = 网络 ID）→ S1 → E（解封装）→ SRv6 | 段内 VXLAN（underlay 是 VLAN 4000），跨站点 SRv6 |
+| L2 VM → 其它站点 | tap → bridge → VLAN → S1 → E → SRv6 | 段内 802.1Q，跨站点 SRv6（隧道内层不带 VLAN） |
+| 其它站点 → VM | E 解 SRv6 后按上面两条路径原路回到 PM | 同上 |
 
-只有 PM-A 有业务 VLAN 上联，PM-B 的站外流量先经 VXLAN 到 PM-A 再出站点；
-这样同站点流量一定走隧道，也不会在 S1 上出现重复帧。
+两种 VPN 的段内封装不同，原因是它们要区分的对象不同：
+
+- **L3VPN 用 VXLAN**：每台 PM 都有 `u4000` 接入 underlay，自己建一个
+  VXLAN（VNI = 网络 ID，对端是 E）。切片用 24 bit 的 VNI 标识，
+  不需要为每个切片分配 VLAN（整条链路只共用 underlay 的 VLAN 4000）；
+  同站点和跨站点的 L3 流量都不必先绕到另一台 PM。
+- **L2VPN 用 VLAN**：L2 转发本来就是“按 VLAN 划分广播域”，PM↔E 这一段用
+  802.1Q 最直接；只有 PM-1 建业务 VLAN 上联（`v<vid>` 子接口），
+  PM-2 的站外 L2 流量先经站点内 VXLAN 到 PM-1 再出站点，
+  避免 S1 上出现重复帧。
+
+跨站点这一段两种 VPN 都交给 E 做 SRv6：L3 是 SRH + 内层 IPv6，
+L2 是 SRH + `next header = Ethernet`（整帧套进 SRv6），
+所以“跨站点 SRv6”这句对两类流量都成立。
 
 地址和 MAC：
 
