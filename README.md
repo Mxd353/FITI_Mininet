@@ -10,8 +10,9 @@
 >
 > 运行方式与主线相同：`make parallel-run-min` / `make verify-min`
 > （首次需 `make parallel-bpf`，`all` 目标已包含）；
-> 切换版本：`feature/parallel-network`、`feature/vxlan-access`（单层 VLAN）、
-> `feature/qinq-access`（Linux VTEP + QinQ）或 `feature/vxlan-e-shim`（当前）。
+> 切换版本：`feature/parallel-network`（PM 直接用 VLAN）、
+> `feature/qinq-access`（Linux VTEP + QinQ，备选）或
+> `feature/vxlan-e-shim`（当前，VXLAN 方案实现）。
 
 本分支只包含 **中关村主干网并行网络仿真**。
 
