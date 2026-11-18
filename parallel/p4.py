@@ -15,7 +15,8 @@ from parallel.config import DEFAULT_P4_JSON, DEFAULT_P4_SRC
 def compile_p4(src=None, out=None, force=False):
     src = os.path.abspath(src or DEFAULT_P4_SRC)
     out = os.path.abspath(out or DEFAULT_P4_JSON)
-    p4info = os.path.splitext(out)[0] + '.p4info.txt'
+    # 用 .txtpb：p4c 已弃用 .txt 后缀（会打 deprecated 警告）
+    p4info = os.path.splitext(out)[0] + '.p4info.txtpb'
     if (not force and os.path.exists(out) and os.path.exists(p4info)
             and os.path.getmtime(out) >= os.path.getmtime(src)
             and os.path.getmtime(p4info) >= os.path.getmtime(src)):

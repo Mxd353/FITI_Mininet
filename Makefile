@@ -1,6 +1,6 @@
 P4C      ?= p4c-bm2-ss
 PARALLEL_P4_JSON  = build/parallel_vpn.json
-PARALLEL_P4INFO   = build/parallel_vpn.p4info.txt
+PARALLEL_P4INFO   = build/parallel_vpn.p4info.txtpb
 CSUM_SHIM         = build/vxlan_csum_shim.o
 CLANG    ?= clang
 
