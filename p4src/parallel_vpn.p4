@@ -536,21 +536,30 @@ control IngressImpl(inout headers_t hdr,
                                        hdr.vlan.etherType :
                                        hdr.ethernet.etherType;
         hdr.inner_vlan.setInvalid();
-        hdr.inner_ipv6.setValid();
-        hdr.inner_ipv6.version = hdr.ipv6.version;
-        hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
-        hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
-        hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
-        hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
-        hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
-        hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
-        hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        // 租户帧可能不是 IPv6（例如 ARP），这时不要生成内层 IPv6 头
+        if (hdr.ipv6.isValid()) {
+            hdr.inner_ipv6.setValid();
+            hdr.inner_ipv6.version = hdr.ipv6.version;
+            hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
+            hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
+            hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
+            hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
+            hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
+            hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
+            hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        } else {
+            hdr.inner_ipv6.setInvalid();
+        }
 
         hdr.ipv6.version = 6;
-        hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.isValid() ?
+                                hdr.inner_ipv6.trafficClass : 0;
         hdr.ipv6.flowLabel = 0;
         // 外层 = 8B UDP + 8B VXLAN + 14B 内层 Eth + 内层 IPv6
-        hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + 70;
+        hdr.ipv6.payloadLen = 70;
+        if (hdr.inner_ipv6.isValid()) {
+            hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + 70;
+        }
         hdr.ipv6.nextHdr = IPPROTO_UDP;
         hdr.ipv6.hopLimit = 64;
         hdr.ipv6.srcAddr = src_vtep;
@@ -559,8 +568,7 @@ control IngressImpl(inout headers_t hdr,
         hdr.udp.setValid();
         hdr.udp.srcPort = UDP_VXLAN;
         hdr.udp.dstPort = UDP_VXLAN;
-        // UDP 长度 = 8(UDP) + 8(VXLAN) + 14(内层 Eth) + 内层 IPv6
-        hdr.udp.length = hdr.inner_ipv6.payloadLen + 70;
+        hdr.udp.length = hdr.ipv6.payloadLen;
         hdr.udp.checksum = 0;
         hdr.vxlan.setValid();
         hdr.vxlan.flags = VXLAN_FLAGS;
@@ -689,15 +697,20 @@ control IngressImpl(inout headers_t hdr,
                                        hdr.vlan.etherType :
                                        hdr.ethernet.etherType;
         hdr.inner_vlan.setInvalid();
-        hdr.inner_ipv6.setValid();
-        hdr.inner_ipv6.version = hdr.ipv6.version;
-        hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
-        hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
-        hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
-        hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
-        hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
-        hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
-        hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        // 租户帧可能不是 IPv6（例如 ARP），这时不要生成内层 IPv6 头
+        if (hdr.ipv6.isValid()) {
+            hdr.inner_ipv6.setValid();
+            hdr.inner_ipv6.version = hdr.ipv6.version;
+            hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
+            hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
+            hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
+            hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
+            hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
+            hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
+            hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        } else {
+            hdr.inner_ipv6.setInvalid();
+        }
 
         hdr.ipv6.setValid();
         hdr.ipv6.version = 6;
@@ -767,21 +780,30 @@ control IngressImpl(inout headers_t hdr,
         hdr.inner_ethernet.srcAddr = hdr.ethernet.srcAddr;
         hdr.inner_ethernet.etherType = hdr.ethernet.etherType;
         hdr.inner_vlan.setInvalid();
-        hdr.inner_ipv6.setValid();
-        hdr.inner_ipv6.version = hdr.ipv6.version;
-        hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
-        hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
-        hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
-        hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
-        hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
-        hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
-        hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        // 租户帧可能不是 IPv6（例如 ARP），这时不要生成内层 IPv6 头
+        if (hdr.ipv6.isValid()) {
+            hdr.inner_ipv6.setValid();
+            hdr.inner_ipv6.version = hdr.ipv6.version;
+            hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
+            hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
+            hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
+            hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
+            hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
+            hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
+            hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        } else {
+            hdr.inner_ipv6.setInvalid();
+        }
 
         hdr.ipv6.setValid();
         hdr.ipv6.version = 6;
-        hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.isValid() ?
+                                hdr.inner_ipv6.trafficClass : 0;
         hdr.ipv6.flowLabel = 0;
-        hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
+        hdr.ipv6.payloadLen = overhead;
+        if (hdr.inner_ipv6.isValid()) {
+            hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
+        }
         hdr.ipv6.nextHdr = IPPROTO_UDP;
         hdr.ipv6.hopLimit = 64;
         hdr.ipv6.srcAddr = src_vtep;
@@ -911,20 +933,29 @@ control IngressImpl(inout headers_t hdr,
         } else {
             hdr.inner_vlan.setInvalid();
         }
-        hdr.inner_ipv6.setValid();
-        hdr.inner_ipv6.version = hdr.ipv6.version;
-        hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
-        hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
-        hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
-        hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
-        hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
-        hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
-        hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        // 租户帧可能不是 IPv6（例如 ARP），这时不要生成内层 IPv6 头
+        if (hdr.ipv6.isValid()) {
+            hdr.inner_ipv6.setValid();
+            hdr.inner_ipv6.version = hdr.ipv6.version;
+            hdr.inner_ipv6.trafficClass = hdr.ipv6.trafficClass;
+            hdr.inner_ipv6.flowLabel = hdr.ipv6.flowLabel;
+            hdr.inner_ipv6.payloadLen = hdr.ipv6.payloadLen;
+            hdr.inner_ipv6.nextHdr = hdr.ipv6.nextHdr;
+            hdr.inner_ipv6.hopLimit = hdr.ipv6.hopLimit;
+            hdr.inner_ipv6.srcAddr = hdr.ipv6.srcAddr;
+            hdr.inner_ipv6.dstAddr = hdr.ipv6.dstAddr;
+        } else {
+            hdr.inner_ipv6.setInvalid();
+        }
 
         hdr.ipv6.version = 6;
-        hdr.ipv6.trafficClass = hdr.inner_ipv6.trafficClass;
+        hdr.ipv6.trafficClass = hdr.inner_ipv6.isValid() ?
+                                hdr.inner_ipv6.trafficClass : 0;
         hdr.ipv6.flowLabel = 0;
-        hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
+        hdr.ipv6.payloadLen = overhead;
+        if (hdr.inner_ipv6.isValid()) {
+            hdr.ipv6.payloadLen = hdr.inner_ipv6.payloadLen + overhead;
+        }
         hdr.ipv6.nextHdr = IPPROTO_UDP;
         hdr.ipv6.hopLimit = 64;
         hdr.ipv6.srcAddr = src;
